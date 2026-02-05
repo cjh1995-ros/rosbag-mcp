@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rosbag-mcp"
+version = "0.1.1"
+description = "MCP server for analyzing ROS and ROS 2 bag files with LLMs"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "Junhyeok Choi" }
+]
+keywords = ["mcp", "ros", "rosbag", "robotics", "llm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "rosbags>=0.9.0",
+    "numpy>=1.24.0",
+    "matplotlib>=3.7.0",
+    "Pillow>=10.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/cjh1995-ros/rosbag-mcp"
+Repository = "https://github.com/cjh1995-ros/rosbag-mcp"
+Issues = "https://github.com/cjh1995-ros/rosbag-mcp/issues"
+
+[project.scripts]
+rosbag-mcp = "rosbag_mcp.server:main"
+
+[tool.hatch.build.targets.sdist]
+exclude = ["test_bag/", "paper/", ".claude/", ".ruff_cache/", "uv.lock"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rosbag_mcp"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+select = ["E", "F", "I", "W"]

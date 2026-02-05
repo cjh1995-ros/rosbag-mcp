@@ -1,0 +1,5 @@
+__pycache__/
+.DS_Store
+.venv/
+#.ruff_cache/
+#test_bag/
