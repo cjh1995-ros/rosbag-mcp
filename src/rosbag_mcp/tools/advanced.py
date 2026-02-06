@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import logging
 import math
 from collections import defaultdict
 from pathlib import Path
@@ -17,12 +18,16 @@ from rosbag_mcp.bag_reader import (
 )
 from rosbag_mcp.tools.utils import get_nested_field, json_serialize
 
+logger = logging.getLogger(__name__)
+
 
 async def get_topic_schema(
     topic: str,
     bag_path: str | None = None,
 ) -> list[TextContent]:
+    logger.info(f"Getting schema for topic {topic}")
     schema_info = _get_topic_schema(topic, bag_path)
+    logger.debug(f"Schema retrieved for {topic}")
     return [TextContent(type="text", text=json_serialize(schema_info))]
 
 
@@ -32,6 +37,7 @@ async def analyze_imu(
     end_time: float | None = None,
     bag_path: str | None = None,
 ) -> list[TextContent]:
+    logger.info(f"Analyzing IMU data from topic {imu_topic}")
     orientations = []
     linear_accels = []
     angular_vels = []
@@ -113,6 +119,7 @@ async def analyze_imu(
             },
         }
 
+    logger.debug(f"IMU analysis complete: {len(timestamps)} messages")
     return [TextContent(type="text", text=json_serialize(result))]
 
 
@@ -120,6 +127,7 @@ async def analyze_topic_stats(
     topic: str,
     bag_path: str | None = None,
 ) -> list[TextContent]:
+    logger.info(f"Analyzing topic statistics for {topic}")
     timestamps = get_topic_timestamps(topic, bag_path)
 
     if not timestamps:
@@ -167,6 +175,7 @@ async def analyze_topic_stats(
         },
     }
 
+    logger.debug(f"Topic stats: {len(timestamps)} messages, {len(gaps)} gaps detected")
     return [TextContent(type="text", text=json_serialize(result))]
 
 
@@ -179,6 +188,7 @@ async def compare_topics(
     end_time: float | None = None,
     bag_path: str | None = None,
 ) -> list[TextContent]:
+    logger.info(f"Comparing topics {topic1} and {topic2}")
     data1 = {"times": [], "values": []}
     data2 = {"times": [], "values": []}
 
@@ -199,8 +209,12 @@ async def compare_topics(
             data2["values"].append(float(value))
 
     if not data1["values"] or not data2["values"]:
+        logger.warning(
+            f"Insufficient data for comparison: topic1={len(data1['values'])}, topic2={len(data2['values'])}"
+        )
         return [TextContent(type="text", text="Insufficient data for comparison")]
 
+    logger.debug(f"Comparing {len(data1['values'])} vs {len(data2['values'])} values")
     interp_values2 = np.interp(data1["times"], data2["times"], data2["values"])
     differences = np.array(data1["values"]) - interp_values2
 
@@ -233,6 +247,7 @@ async def compare_topics(
         },
     }
 
+    logger.debug("Topic comparison complete")
     return [TextContent(type="text", text=json_serialize(result))]
 
 
@@ -245,6 +260,7 @@ async def export_to_csv(
     max_messages: int = 10000,
     bag_path: str | None = None,
 ) -> list[TextContent]:
+    logger.info(f"Exporting topic {topic} to CSV: {output_path}")
     messages = []
     all_fields: set[str] = set()
 
@@ -267,6 +283,7 @@ async def export_to_csv(
         messages.append(row)
 
     if not messages:
+        logger.warning(f"No messages found in topic {topic}")
         return [TextContent(type="text", text="No messages found")]
 
     fieldnames = ["timestamp"] + sorted(all_fields)
@@ -279,6 +296,7 @@ async def export_to_csv(
         writer.writeheader()
         writer.writerows(messages)
 
+    logger.info(f"CSV export complete: {len(messages)} messages, {len(fieldnames)} fields")
     return [
         TextContent(
             type="text",

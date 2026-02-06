@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
 
 from mcp.types import TextContent
@@ -15,17 +16,27 @@ from rosbag_mcp.bag_reader import (
 )
 from rosbag_mcp.tools.utils import json_serialize
 
+logger = logging.getLogger(__name__)
+
 
 async def set_bag_path(path: str) -> list[TextContent]:
+    logger.info(f"Setting bag path to: {path}")
     result = _set_bag_path(path)
+    logger.debug(f"Bag path set successfully: {result}")
     return [TextContent(type="text", text=result)]
 
 
 async def list_bags(directory: str | None = None) -> list[TextContent]:
+    logger.info(f"Listing bags in directory: {directory or 'current'}")
     bags = _list_bags(directory)
+    logger.debug(f"Found {len(bags)} bag files")
     return [TextContent(type="text", text=json_serialize(bags))]
 
 
 async def bag_info(bag_path: str | None = None) -> list[TextContent]:
+    logger.info(f"Getting bag info for: {bag_path or 'current bag'}")
     info = _get_bag_info(bag_path)
+    logger.debug(
+        f"Bag info retrieved: {info.path}, {len(info.topics)} topics, {info.message_count} messages"
+    )
     return [TextContent(type="text", text=json_serialize(asdict(info)))]

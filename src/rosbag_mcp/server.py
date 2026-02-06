@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -35,6 +36,8 @@ from rosbag_mcp.tools import (
     search_messages,
     set_bag_path,
 )
+
+logger = logging.getLogger(__name__)
 
 server = Server("rosbag-mcp")
 
@@ -765,12 +768,16 @@ async def handle_list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def handle_call_tool(name: str, arguments: dict) -> list[TextContent | ImageContent]:
+    logger.info(f"Tool called: {name}")
     try:
         handler = TOOL_HANDLERS.get(name)
         if handler is None:
+            logger.warning(f"Unknown tool requested: {name}")
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
+        logger.debug(f"Executing tool {name} with arguments: {list(arguments.keys())}")
         return await handler(arguments)
     except Exception as e:
+        logger.error(f"Error executing tool {name}: {str(e)}", exc_info=True)
         return [TextContent(type="text", text=f"Error: {str(e)}")]
 
 
@@ -780,6 +787,10 @@ async def run_server():
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s"
+    )
+    logger.info("Starting rosbag-mcp server")
     asyncio.run(run_server())
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from mcp.types import TextContent
@@ -9,6 +10,8 @@ from rosbags.rosbag2 import Writer as Ros2Writer
 
 from rosbag_mcp.bag_reader import get_current_bag_path
 
+logger = logging.getLogger(__name__)
+
 
 async def filter_bag(
     output_path: str,
@@ -17,9 +20,11 @@ async def filter_bag(
     end_time: float | None = None,
     bag_path: str | None = None,
 ) -> list[TextContent]:
+    logger.info(f"Filtering bag to {output_path} with topics: {topics}")
     output_ext = Path(output_path).suffix
     message_count = 0
     source_path = bag_path or get_current_bag_path()
+    logger.debug(f"Source bag: {source_path}, output format: {output_ext}")
 
     with AnyReader([Path(source_path)]) as reader:
         if output_ext == ".bag":
@@ -60,6 +65,7 @@ async def filter_bag(
                     writer.write(connections[conn.topic], timestamp, rawdata)
                     message_count += 1
 
+    logger.info(f"Filtered bag created: {message_count} messages written to {output_path}")
     return [
         TextContent(
             type="text",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 
 import matplotlib
 
@@ -18,6 +19,8 @@ from rosbag_mcp.bag_reader import (
 )
 from rosbag_mcp.tools.utils import extract_position, get_nested_field
 
+logger = logging.getLogger(__name__)
+
 
 async def plot_timeseries(
     fields: list[str],
@@ -26,6 +29,7 @@ async def plot_timeseries(
     title: str = "Time Series Plot",
     bag_path: str | None = None,
 ) -> list[TextContent | ImageContent]:
+    logger.info(f"Plotting time series for fields: {fields}")
     topics_to_fields: dict[str, list[tuple[str, str | None]]] = {}
     for field in fields:
         parts = field.split(".")
@@ -74,6 +78,7 @@ async def plot_timeseries(
     plt.close()
 
     img_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    logger.debug(f"Time series plot generated: {title}")
 
     return [
         ImageContent(type="image", data=img_base64, mimeType="image/png"),
@@ -88,7 +93,9 @@ async def plot_2d(
     title: str = "2D Trajectory",
     bag_path: str | None = None,
 ) -> list[TextContent | ImageContent]:
-    xs, ys = [], []
+    logger.info(f"Plotting 2D trajectory from topic {pose_topic}")
+    xs = []
+    ys = []
 
     for msg in read_messages(
         bag_path=bag_path, topics=[pose_topic], start_time=start_time, end_time=end_time
@@ -99,8 +106,10 @@ async def plot_2d(
             ys.append(pos[1])
 
     if not xs:
+        logger.warning(f"No position data found in topic {pose_topic}")
         return [TextContent(type="text", text="No position data found")]
 
+    logger.debug(f"2D plot: {len(xs)} positions")
     fig, ax = plt.subplots(figsize=(8, 8))
 
     ax.plot(xs, ys, "b-", linewidth=1, alpha=0.7)
@@ -119,6 +128,7 @@ async def plot_2d(
     plt.close()
 
     img_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    logger.debug(f"2D trajectory plot generated: {title}")
 
     return [
         ImageContent(type="image", data=img_base64, mimeType="image/png"),
@@ -132,9 +142,11 @@ async def plot_lidar_scan(
     title: str = "LiDAR Scan",
     bag_path: str | None = None,
 ) -> list[TextContent | ImageContent]:
+    logger.info(f"Plotting LiDAR scan from topic {scan_topic} at timestamp {timestamp}")
     scan_msg = _get_message_at_time(scan_topic, timestamp, bag_path, tolerance=0.5)
 
     if not scan_msg:
+        logger.warning(f"No LiDAR scan found at timestamp {timestamp}")
         return [TextContent(type="text", text="No LiDAR scan found")]
 
     data = scan_msg.data
@@ -161,10 +173,11 @@ async def plot_lidar_scan(
     plt.close()
 
     img_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    logger.debug(f"LiDAR scan plot generated: {title}")
 
     return [
         ImageContent(type="image", data=img_base64, mimeType="image/png"),
-        TextContent(type="text", text=f"LiDAR scan plot at timestamp {timestamp}"),
+        TextContent(type="text", text=f"LiDAR scan plot: {title}"),
     ]
 
 
@@ -178,6 +191,7 @@ async def plot_comparison(
     title: str = "Topic Comparison",
     bag_path: str | None = None,
 ) -> list[TextContent | ImageContent]:
+    logger.info(f"Comparing topics {topic1} and {topic2}")
     data1 = {"times": [], "values": []}
     data2 = {"times": [], "values": []}
 

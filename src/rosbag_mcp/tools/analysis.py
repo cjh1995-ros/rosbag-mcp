@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import math
 import re
 
@@ -16,6 +17,8 @@ from rosbag_mcp.bag_reader import (
 )
 from rosbag_mcp.tools.utils import extract_position, extract_velocity, json_serialize
 
+logger = logging.getLogger(__name__)
+
 
 async def analyze_trajectory(
     pose_topic: str = "/odom",
@@ -24,6 +27,7 @@ async def analyze_trajectory(
     include_waypoints: bool = False,
     bag_path: str | None = None,
 ) -> list[TextContent]:
+    logger.info(f"Analyzing trajectory from topic {pose_topic}")
     positions = []
     velocities = []
     timestamps = []
@@ -41,8 +45,10 @@ async def analyze_trajectory(
             velocities.append(vel)
 
     if not positions:
+        logger.warning(f"No position data found in topic {pose_topic}")
         return [TextContent(type="text", text="No position data found")]
 
+    logger.debug(f"Trajectory analysis: {len(positions)} positions, {len(velocities)} velocities")
     total_distance = 0.0
     for i in range(1, len(positions)):
         dx = positions[i][0] - positions[i - 1][0]
@@ -98,9 +104,11 @@ async def analyze_lidar_scan(
     obstacle_threshold: float = 1.0,
     bag_path: str | None = None,
 ) -> list[TextContent]:
+    logger.info(f"Analyzing LiDAR scan from topic {scan_topic}")
     scan_msg = None
 
     if timestamp:
+        logger.debug(f"Getting LiDAR scan at timestamp {timestamp}")
         scan_msg = _get_message_at_time(scan_topic, timestamp, bag_path, tolerance=0.5)
     else:
         for msg in read_messages(bag_path=bag_path, topics=[scan_topic]):

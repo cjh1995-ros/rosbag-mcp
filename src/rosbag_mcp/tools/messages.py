@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import re
 from dataclasses import asdict
@@ -17,6 +18,8 @@ from rosbag_mcp.bag_reader import (
 )
 from rosbag_mcp.tools.utils import extract_position, get_nested_field, json_serialize
 
+logger = logging.getLogger(__name__)
+
 
 async def get_message_at_time(
     topic: str,
@@ -24,6 +27,7 @@ async def get_message_at_time(
     bag_path: str | None = None,
     tolerance: float = 0.1,
 ) -> list[TextContent]:
+    logger.info(f"Getting message from topic {topic} at timestamp {timestamp}")
     msg = _get_message_at_time(
         topic=topic,
         target_time=timestamp,
@@ -31,7 +35,9 @@ async def get_message_at_time(
         tolerance=tolerance,
     )
     if msg:
+        logger.debug(f"Message found at {msg.timestamp}")
         return [TextContent(type="text", text=json_serialize(asdict(msg)))]
+    logger.debug(f"No message found for topic {topic} at timestamp {timestamp}")
     return [TextContent(type="text", text="No message found at specified time")]
 
 
@@ -42,6 +48,7 @@ async def get_messages_in_range(
     bag_path: str | None = None,
     max_messages: int = 100,
 ) -> list[TextContent]:
+    logger.info(f"Getting messages from topic {topic} in range [{start_time}, {end_time}]")
     msgs = _get_messages_in_range(
         topic=topic,
         start_time=start_time,
@@ -49,6 +56,7 @@ async def get_messages_in_range(
         bag_path=bag_path,
         max_messages=max_messages,
     )
+    logger.debug(f"Retrieved {len(msgs)} messages from {topic}")
     return [TextContent(type="text", text=json_serialize([asdict(m) for m in msgs]))]
 
 
@@ -60,6 +68,7 @@ async def search_messages(
     limit: int = 10,
     bag_path: str | None = None,
 ) -> list[TextContent]:
+    logger.info(f"Searching messages in topic {topic} with condition {condition_type}")
     results = []
 
     for msg in read_messages(bag_path=bag_path, topics=[topic]):
@@ -108,4 +117,5 @@ async def search_messages(
                     }
                 )
 
+    logger.debug(f"Search completed: found {len(results)} matching messages")
     return [TextContent(type="text", text=json_serialize(results))]
