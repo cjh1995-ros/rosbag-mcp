@@ -67,6 +67,8 @@ async def search_messages(
     field: str | None = None,
     limit: int = 10,
     bag_path: str | None = None,
+    correlate_topic: str | None = None,
+    correlation_tolerance: float = 0.1,
 ) -> list[TextContent]:
     logger.info(f"Searching messages in topic {topic} with condition {condition_type}")
     results = []
@@ -85,13 +87,23 @@ async def search_messages(
                 dist = math.sqrt((pos[0] - target_x) ** 2 + (pos[1] - target_y) ** 2)
                 if dist <= radius:
                     match = True
-                    results.append(
-                        {
-                            "timestamp": msg.timestamp,
-                            "position": {"x": pos[0], "y": pos[1], "z": pos[2]},
-                            "distance_to_target": round(dist, 4),
-                        }
-                    )
+                    result_entry = {
+                        "timestamp": msg.timestamp,
+                        "position": {"x": pos[0], "y": pos[1], "z": pos[2]},
+                        "distance_to_target": round(dist, 4),
+                    }
+
+                    # Add correlated message if requested
+                    if correlate_topic:
+                        correlated_msg = _get_message_at_time(
+                            correlate_topic,
+                            msg.timestamp,
+                            bag_path,
+                            tolerance=correlation_tolerance,
+                        )
+                        result_entry["correlated"] = correlated_msg.data if correlated_msg else None
+
+                    results.append(result_entry)
         else:
             field_value = get_nested_field(msg.data, field) if field else msg.data
 
@@ -107,15 +119,30 @@ async def search_messages(
             elif condition_type == "less_than":
                 if field_value is not None and float(field_value) < float(value):
                     match = True
+            elif condition_type == "contains":
+                # Check if field value contains the substring (case-insensitive)
+                if field_value and value.lower() in str(field_value).lower():
+                    match = True
+            elif condition_type == "field_exists":
+                # Check if the field path exists and is not None
+                if field_value is not None:
+                    match = True
 
             if match and condition_type != "near_position":
-                results.append(
-                    {
-                        "timestamp": msg.timestamp,
-                        "value": field_value,
-                        "data": msg.data,
-                    }
-                )
+                result_entry = {
+                    "timestamp": msg.timestamp,
+                    "value": field_value,
+                    "data": msg.data,
+                }
+
+                # Add correlated message if requested
+                if correlate_topic:
+                    correlated_msg = _get_message_at_time(
+                        correlate_topic, msg.timestamp, bag_path, tolerance=correlation_tolerance
+                    )
+                    result_entry["correlated"] = correlated_msg.data if correlated_msg else None
+
+                results.append(result_entry)
 
     logger.debug(f"Search completed: found {len(results)} matching messages")
     return [TextContent(type="text", text=json_serialize(results))]

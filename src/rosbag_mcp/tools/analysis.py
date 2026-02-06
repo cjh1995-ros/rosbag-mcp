@@ -288,47 +288,124 @@ async def get_image_at_time(
     image_topic: str,
     timestamp: float,
     bag_path: str | None = None,
+    max_size: int = 1024,
+    quality: int = 85,
 ) -> list[TextContent | ImageContent]:
     from PIL import Image
 
+    logger.info(f"Getting image from {image_topic} at {timestamp}")
     img_msg = _get_message_at_time(image_topic, timestamp, bag_path, tolerance=0.5)
 
     if not img_msg:
+        logger.warning(f"No image found at {timestamp} on {image_topic}")
         return [TextContent(type="text", text="No image found at specified time")]
 
     data = img_msg.data
-    width = data.get("width", 0)
-    height = data.get("height", 0)
-    encoding = data.get("encoding", "rgb8")
-    img_data = data.get("data", [])
 
-    if not img_data:
-        return [TextContent(type="text", text="Image data is empty")]
+    # Check if this is a CompressedImage (has 'format' field, no 'width' field)
+    is_compressed = "format" in data and "width" not in data
 
-    if isinstance(img_data, list):
-        img_data = bytes(img_data)
+    if is_compressed:
+        # CompressedImage: decode JPEG/PNG directly with Pillow
+        logger.debug(f"Detected CompressedImage format: {data.get('format', 'unknown')}")
+        img_data = data.get("data", [])
+        if not img_data:
+            return [TextContent(type="text", text="Compressed image data is empty")]
 
-    if encoding in ["rgb8", "bgr8"]:
-        if encoding == "bgr8":
-            img_arr = np.frombuffer(img_data, dtype=np.uint8).reshape((height, width, 3))
-            img_arr = img_arr[:, :, ::-1]
-        else:
-            img_arr = np.frombuffer(img_data, dtype=np.uint8).reshape((height, width, 3))
-        img = Image.fromarray(img_arr)
-    elif encoding == "mono8":
-        img_arr = np.frombuffer(img_data, dtype=np.uint8).reshape((height, width))
-        img = Image.fromarray(img_arr)
+        if isinstance(img_data, list):
+            img_data = bytes(img_data)
+
+        try:
+            img = Image.open(io.BytesIO(img_data))
+            original_size = img.size
+            logger.debug(f"Decoded compressed image: {original_size}")
+        except Exception as e:
+            logger.error(f"Failed to decode compressed image: {e}")
+            return [TextContent(type="text", text=f"Failed to decode compressed image: {e}")]
     else:
-        return [TextContent(type="text", text=f"Unsupported image encoding: {encoding}")]
+        # Raw Image: decode based on encoding
+        width = data.get("width", 0)
+        height = data.get("height", 0)
+        encoding = data.get("encoding", "rgb8")
+        img_data = data.get("data", [])
+
+        if not img_data:
+            return [TextContent(type="text", text="Image data is empty")]
+
+        if isinstance(img_data, list):
+            img_data = bytes(img_data)
+
+        logger.debug(f"Raw image: {width}x{height}, encoding={encoding}")
+
+        try:
+            if encoding in ["rgb8", "bgr8"]:
+                if encoding == "bgr8":
+                    img_arr = np.frombuffer(img_data, dtype=np.uint8).reshape((height, width, 3))
+                    img_arr = img_arr[:, :, ::-1]
+                else:
+                    img_arr = np.frombuffer(img_data, dtype=np.uint8).reshape((height, width, 3))
+                img = Image.fromarray(img_arr)
+            elif encoding == "mono8":
+                img_arr = np.frombuffer(img_data, dtype=np.uint8).reshape((height, width))
+                img = Image.fromarray(img_arr)
+            elif encoding in ["mono16", "16UC1"]:
+                img_arr = np.frombuffer(img_data, dtype=np.uint16).reshape((height, width))
+                # Scale to 8-bit
+                img_arr = (img_arr >> 8).astype(np.uint8)
+                img = Image.fromarray(img_arr)
+            elif encoding == "32FC1":
+                img_arr = np.frombuffer(img_data, dtype=np.float32).reshape((height, width))
+                # Normalize to 0-255
+                img_arr = (
+                    (img_arr - img_arr.min()) / (img_arr.max() - img_arr.min()) * 255
+                ).astype(np.uint8)
+                img = Image.fromarray(img_arr)
+            elif encoding == "rgba8":
+                img_arr = np.frombuffer(img_data, dtype=np.uint8).reshape((height, width, 4))
+                # Drop alpha channel
+                img_arr = img_arr[:, :, :3]
+                img = Image.fromarray(img_arr)
+            elif encoding == "bgra8":
+                img_arr = np.frombuffer(img_data, dtype=np.uint8).reshape((height, width, 4))
+                # Swap BGR to RGB and drop alpha
+                img_arr = img_arr[:, :, [2, 1, 0]]
+                img = Image.fromarray(img_arr)
+            else:
+                return [TextContent(type="text", text=f"Unsupported image encoding: {encoding}")]
+        except Exception as e:
+            logger.error(f"Failed to decode raw image: {e}")
+            return [TextContent(type="text", text=f"Failed to decode image: {e}")]
+
+        original_size = (width, height)
+
+    # Smart resize if image exceeds max_size
+    resized = False
+    if max(img.size) > max_size:
+        logger.debug(f"Resizing from {img.size} to fit {max_size}")
+        img.thumbnail((max_size, max_size), Image.LANCZOS)
+        resized = True
 
     buffer = io.BytesIO()
-    img.save(buffer, format="JPEG", quality=85)
+    img.save(buffer, format="JPEG", quality=quality)
     img_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+    # Build metadata
+    metadata = {
+        "timestamp": timestamp,
+        "original_size": original_size,
+        "final_size": img.size,
+        "resized": resized,
+        "quality": quality,
+    }
+    if is_compressed:
+        metadata["format"] = data.get("format", "unknown")
+    else:
+        metadata["encoding"] = data.get("encoding", "unknown")
 
     return [
         ImageContent(type="image", data=img_base64, mimeType="image/jpeg"),
         TextContent(
             type="text",
-            text=f"Image at timestamp {timestamp}: {width}x{height}, encoding: {encoding}",
+            text=f"Image at timestamp {timestamp}: {metadata}",
         ),
     ]
