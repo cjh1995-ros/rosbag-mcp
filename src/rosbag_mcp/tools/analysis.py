@@ -25,6 +25,7 @@ async def analyze_trajectory(
     start_time: float | None = None,
     end_time: float | None = None,
     include_waypoints: bool = False,
+    waypoint_angle_threshold: float = 15.0,
     bag_path: str | None = None,
 ) -> list[TextContent]:
     logger.info(f"Analyzing trajectory from topic {pose_topic}")
@@ -49,11 +50,21 @@ async def analyze_trajectory(
         return [TextContent(type="text", text="No position data found")]
 
     logger.debug(f"Trajectory analysis: {len(positions)} positions, {len(velocities)} velocities")
+
+    # Calculate total distance and displacement
     total_distance = 0.0
     for i in range(1, len(positions)):
         dx = positions[i][0] - positions[i - 1][0]
         dy = positions[i][1] - positions[i - 1][1]
         total_distance += math.sqrt(dx * dx + dy * dy)
+
+    # Displacement: straight-line distance from start to end
+    displacement = math.sqrt(
+        (positions[-1][0] - positions[0][0]) ** 2 + (positions[-1][1] - positions[0][1]) ** 2
+    )
+
+    # Path efficiency: displacement / total_distance (1.0 = perfectly straight)
+    path_efficiency = displacement / total_distance if total_distance > 0 else 0.0
 
     xs = [p[0] for p in positions]
     ys = [p[1] for p in positions]
@@ -61,9 +72,24 @@ async def analyze_trajectory(
     linear_speeds = [abs(v[0]) for v in velocities] if velocities else []
     angular_speeds = [abs(v[1]) for v in velocities] if velocities else []
 
+    # Calculate moving vs stationary time
+    moving_time_s = 0.0
+    if linear_speeds and len(timestamps) > 1:
+        for i in range(len(linear_speeds)):
+            if linear_speeds[i] > 0.01:  # Moving threshold: 0.01 m/s
+                if i < len(timestamps) - 1:
+                    moving_time_s += timestamps[i + 1] - timestamps[i]
+
+    duration_s = timestamps[-1] - timestamps[0] if len(timestamps) > 1 else 0
+    stationary_time_s = duration_s - moving_time_s
+
     result = {
         "total_distance_m": round(total_distance, 3),
-        "duration_s": round(timestamps[-1] - timestamps[0], 3) if len(timestamps) > 1 else 0,
+        "displacement_m": round(displacement, 3),
+        "path_efficiency": round(path_efficiency, 3),
+        "duration_s": round(duration_s, 3),
+        "moving_time_s": round(moving_time_s, 3),
+        "stationary_time_s": round(stationary_time_s, 3),
         "x_range": {"min": round(min(xs), 3), "max": round(max(xs), 3)},
         "y_range": {"min": round(min(ys), 3), "max": round(max(ys), 3)},
         "position_count": len(positions),
@@ -84,16 +110,80 @@ async def analyze_trajectory(
         }
 
     if include_waypoints:
-        step = max(1, len(positions) // 10)
-        result["waypoints"] = [
+        # Angle-based waypoint detection
+        waypoints = []
+        angle_threshold_rad = math.radians(waypoint_angle_threshold)
+
+        # Always include start point
+        waypoints.append(
             {
-                "x": round(p[0], 3),
-                "y": round(p[1], 3),
-                "z": round(p[2], 3),
-                "time": round(timestamps[i * step], 3),
+                "x": round(positions[0][0], 3),
+                "y": round(positions[0][1], 3),
+                "z": round(positions[0][2], 3),
+                "time": round(timestamps[0], 3),
+                "reason": "start",
             }
-            for i, p in enumerate(positions[::step])
-        ]
+        )
+
+        # Detect waypoints based on heading changes
+        for i in range(1, len(positions) - 1):
+            # Calculate heading from previous to current
+            dx1 = positions[i][0] - positions[i - 1][0]
+            dy1 = positions[i][1] - positions[i - 1][1]
+            heading1 = math.atan2(dy1, dx1)
+
+            # Calculate heading from current to next
+            dx2 = positions[i + 1][0] - positions[i][0]
+            dy2 = positions[i + 1][1] - positions[i][1]
+            heading2 = math.atan2(dy2, dx2)
+
+            # Calculate heading change
+            heading_change = abs(heading2 - heading1)
+            # Normalize to [-pi, pi]
+            if heading_change > math.pi:
+                heading_change = 2 * math.pi - heading_change
+
+            # Mark as waypoint if heading change exceeds threshold
+            if heading_change > angle_threshold_rad:
+                waypoints.append(
+                    {
+                        "x": round(positions[i][0], 3),
+                        "y": round(positions[i][1], 3),
+                        "z": round(positions[i][2], 3),
+                        "time": round(timestamps[i], 3),
+                        "reason": "heading_change",
+                        "angle_deg": round(math.degrees(heading_change), 1),
+                    }
+                )
+
+            # Detect stop points (speed drops below threshold)
+            if i < len(linear_speeds) and linear_speeds[i] < 0.01:
+                # Check if stopped for sustained period
+                if i > 0 and i < len(linear_speeds) - 1:
+                    if linear_speeds[i - 1] > 0.01 or linear_speeds[i + 1] > 0.01:
+                        waypoints.append(
+                            {
+                                "x": round(positions[i][0], 3),
+                                "y": round(positions[i][1], 3),
+                                "z": round(positions[i][2], 3),
+                                "time": round(timestamps[i], 3),
+                                "reason": "stop",
+                            }
+                        )
+
+        # Always include end point
+        waypoints.append(
+            {
+                "x": round(positions[-1][0], 3),
+                "y": round(positions[-1][1], 3),
+                "z": round(positions[-1][2], 3),
+                "time": round(timestamps[-1], 3),
+                "reason": "end",
+            }
+        )
+
+        result["waypoints"] = waypoints
+        result["waypoint_count"] = len(waypoints)
 
     return [TextContent(type="text", text=json_serialize(result))]
 
