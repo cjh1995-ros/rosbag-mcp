@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from rosbag_mcp.tools.utils import extract_position, get_nested_field, json_serialize
 
@@ -98,7 +97,7 @@ class TestExtractPosition:
     def test_partial_position(self):
         """Test with partial position data."""
         data = {"pose": {"position": {"x": 1.0}}}
-        result = extract_position(data)
+        extract_position(data)
         # Should handle missing y/z gracefully
 
 

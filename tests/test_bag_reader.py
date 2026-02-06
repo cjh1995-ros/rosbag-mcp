@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import pytest
-
 from rosbag_mcp.bag_reader import BagInfo, BagMessage, _msg_to_dict
 
 

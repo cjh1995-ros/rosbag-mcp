@@ -61,7 +61,7 @@ async def analyze_pointcloud2(
         name = field.get("name", "")
         datatype = field.get("datatype", 0)
         offset = field.get("offset", 0)
-        count = field.get("count", 1)
+        field.get("count", 1)
 
         if datatype in POINTCLOUD_DTYPES:
             np_type, size = POINTCLOUD_DTYPES[datatype]
@@ -76,8 +76,8 @@ async def analyze_pointcloud2(
     if isinstance(point_data, list):
         point_data = bytes(point_data)
 
-    point_step = data.get("point_step", 0)
-    row_step = data.get("row_step", 0)
+    data.get("point_step", 0)
+    data.get("row_step", 0)
     width = data.get("width", 0)
     height = data.get("height", 0)
     is_dense = data.get("is_dense", False)

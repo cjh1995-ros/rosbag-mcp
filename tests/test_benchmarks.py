@@ -8,7 +8,7 @@ from statistics import mean, stdev
 
 import pytest
 
-from rosbag_mcp.cache import BagCacheManager, BagKey, SizeAwareSLRU, TopicTimeIndex
+from rosbag_mcp.cache import BagCacheManager, SizeAwareSLRU, TopicTimeIndex
 
 
 def benchmark(func, iterations=3, warmup=1):
@@ -85,10 +85,10 @@ class TestCacheBenchmarks:
         per_call_ms = (avg_time / 1000) * 1000
 
         print(f"\n{'=' * 60}")
-        print(f"Benchmark 2: TopicTimeIndex.find_nearest")
+        print("Benchmark 2: TopicTimeIndex.find_nearest")
         print(f"{'=' * 60}")
         print(f"Index size:   {len(timestamps_ns):,} timestamps")
-        print(f"Lookups:      1,000")
+        print("Lookups:      1,000")
         print(f"Total time:   {avg_time * 1000:.2f} ± {std_time * 1000:.2f} ms")
         print(f"Per lookup:   {per_call_ms:.4f} ms")
         print(f"{'=' * 60}\n")
@@ -116,10 +116,10 @@ class TestCacheBenchmarks:
         per_call_ms = (avg_time / 1000) * 1000
 
         print(f"\n{'=' * 60}")
-        print(f"Benchmark 3: TopicTimeIndex.find_range")
+        print("Benchmark 3: TopicTimeIndex.find_range")
         print(f"{'=' * 60}")
         print(f"Index size:   {len(timestamps_ns):,} timestamps")
-        print(f"Ranges:       1,000")
+        print("Ranges:       1,000")
         print(f"Total time:   {avg_time * 1000:.2f} ± {std_time * 1000:.2f} ms")
         print(f"Per range:    {per_call_ms:.4f} ms")
         print(f"{'=' * 60}\n")
@@ -130,7 +130,6 @@ class TestCacheBenchmarks:
     def test_benchmark_bag_cache_manager_handle_reuse(self):
         """Benchmark BagCacheManager handle reuse (cache hits)."""
         from unittest.mock import patch
-        import os
 
         manager = BagCacheManager()
         test_path = "/mock/test.bag"
@@ -143,7 +142,7 @@ class TestCacheBenchmarks:
             patch("os.path.realpath", return_value=test_path),
         ):
             # First call creates handle
-            handle = manager.get_handle(test_path)
+            manager.get_handle(test_path)
 
             # Benchmark repeated get_handle calls (should return cached)
             def get_handle_ops():
@@ -154,9 +153,9 @@ class TestCacheBenchmarks:
             per_call_ms = (avg_time / 1000) * 1000
 
         print(f"\n{'=' * 60}")
-        print(f"Benchmark 4: BagCacheManager.get_handle (cache hits)")
+        print("Benchmark 4: BagCacheManager.get_handle (cache hits)")
         print(f"{'=' * 60}")
-        print(f"Calls:        1,000")
+        print("Calls:        1,000")
         print(f"Total time:   {avg_time * 1000:.2f} ± {std_time * 1000:.2f} ms")
         print(f"Per call:     {per_call_ms:.4f} ms")
         print(f"{'=' * 60}\n")
@@ -171,7 +170,7 @@ class TestCacheBenchmarks:
         # Simulate cache miss: create new BagInfo
         def cache_miss():
             for _ in range(1000):
-                info = BagInfo(
+                BagInfo(
                     path="/test.bag",
                     duration=100.0,
                     start_time=1000.0,
@@ -206,7 +205,7 @@ class TestCacheBenchmarks:
         speedup = miss_time / hit_time
 
         print(f"\n{'=' * 60}")
-        print(f"Benchmark 5: Metadata cache hit vs miss")
+        print("Benchmark 5: Metadata cache hit vs miss")
         print(f"{'=' * 60}")
         print(
             f"Cache miss:   {miss_time * 1000:.2f} ± {miss_std * 1000:.2f} ms (1000 BagInfo creations)"
