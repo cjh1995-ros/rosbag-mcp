@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
-from rosbags.highlevel import AnyReader
+from rosbag_mcp.cache import BagCacheManager, TopicTimeIndex
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -32,6 +35,15 @@ class BagReaderState:
 
 
 _state = BagReaderState()
+_cache = BagCacheManager()
+
+
+def _resolve_path(bag_path: str | None) -> str:
+    """Resolve bag path from argument or state."""
+    path = bag_path or _state.current_bag_path
+    if not path:
+        raise ValueError("No bag path set. Call set_bag_path first or provide a bag_path.")
+    return os.path.expanduser(path)
 
 
 def set_bag_path(path: str) -> str:
@@ -39,10 +51,12 @@ def set_bag_path(path: str) -> str:
     if os.path.isfile(path):
         _state.current_bag_path = path
         _state.current_bags_dir = os.path.dirname(path)
+        logger.info(f"Set bag path to: {path}")
         return f"Set bag path to: {path}"
     elif os.path.isdir(path):
         _state.current_bags_dir = path
         _state.current_bag_path = None
+        logger.info(f"Set bags directory to: {path}")
         return f"Set bags directory to: {path}"
     else:
         raise FileNotFoundError(f"Path not found: {path}")
@@ -93,13 +107,23 @@ def list_bags(directory: str | None = None) -> list[dict[str, Any]]:
 
 
 def get_bag_info(bag_path: str | None = None) -> BagInfo:
-    path = bag_path or _state.current_bag_path
-    if not path:
-        raise ValueError("No bag path set. Call set_bag_path first or provide a bag_path.")
+    path = _resolve_path(bag_path)
+    handle = _cache.get_handle(path)
 
-    path = os.path.expanduser(path)
+    # Check cache first
+    cached_info = handle.meta.get("bag_info")
+    if cached_info is not None:
+        logger.debug(f"Cache hit: bag_info for {path}")
+        return cached_info
 
-    with AnyReader([Path(path)]) as reader:
+    # Cache miss - compute and store
+    logger.debug(f"Cache miss: bag_info for {path}")
+    handle.open_reader()
+    try:
+        reader = handle.reader
+        if reader is None:
+            raise RuntimeError(f"Failed to open bag: {path}")
+
         topics = []
         for conn in reader.connections:
             topics.append(
@@ -115,7 +139,7 @@ def get_bag_info(bag_path: str | None = None) -> BagInfo:
         end_time = reader.end_time / 1e9
         message_count = sum(c.msgcount for c in reader.connections)
 
-        return BagInfo(
+        bag_info = BagInfo(
             path=path,
             duration=duration,
             start_time=start_time,
@@ -123,6 +147,12 @@ def get_bag_info(bag_path: str | None = None) -> BagInfo:
             message_count=message_count,
             topics=topics,
         )
+
+        # Cache the result
+        handle.meta["bag_info"] = bag_info
+        return bag_info
+    finally:
+        handle.close_reader()
 
 
 def _msg_to_dict(msg: Any) -> Any:
@@ -146,19 +176,29 @@ def read_messages(
     start_time: float | None = None,
     end_time: float | None = None,
 ) -> Iterator[BagMessage]:
-    path = bag_path or _state.current_bag_path
-    if not path:
-        raise ValueError("No bag path set. Call set_bag_path first or provide a bag_path.")
+    path = _resolve_path(bag_path)
+    handle = _cache.get_handle(path)
 
-    path = os.path.expanduser(path)
+    handle.open_reader()
+    try:
+        reader = handle.reader
+        if reader is None:
+            raise RuntimeError(f"Failed to open bag: {path}")
 
-    with AnyReader([Path(path)]) as reader:
         connections = reader.connections
         if topics:
             connections = [c for c in connections if c.topic in topics]
 
         start_ns = int(start_time * 1e9) if start_time else None
         end_ns = int(end_time * 1e9) if end_time else None
+
+        # Opportunistic index building: if scanning a single topic with no time filters,
+        # collect timestamps for future fast lookups
+        build_index = (
+            topics is not None and len(topics) == 1 and start_time is None and end_time is None
+        )
+        topic_for_index = topics[0] if build_index else None
+        timestamps_ns = [] if build_index else None
 
         for conn, timestamp, rawdata in reader.messages(connections=connections):
             ts_sec = timestamp / 1e9
@@ -168,27 +208,95 @@ def read_messages(
             if end_ns and timestamp > end_ns:
                 break
 
+            if build_index and timestamps_ns is not None:
+                timestamps_ns.append(timestamp)
+
             msg = reader.deserialize(rawdata, conn.msgtype)
             yield BagMessage(
                 topic=conn.topic, timestamp=ts_sec, data=_msg_to_dict(msg), msg_type=conn.msgtype
             )
 
+        # Store index if we built one
+        if build_index and topic_for_index and timestamps_ns:
+            index = TopicTimeIndex(timestamps_ns=timestamps_ns)
+            handle.store_index(topic_for_index, index)
+            logger.debug(f"Built index for {topic_for_index}: {len(timestamps_ns)} timestamps")
+    finally:
+        handle.close_reader()
+
 
 def get_message_at_time(
     topic: str, target_time: float, bag_path: str | None = None, tolerance: float = 0.1
 ) -> BagMessage | None:
-    path = bag_path or _state.current_bag_path
-    if not path:
-        raise ValueError("No bag path set. Call set_bag_path first or provide a bag_path.")
+    path = _resolve_path(bag_path)
+    handle = _cache.get_handle(path)
 
-    path = os.path.expanduser(path)
-    closest_msg = None
-    min_diff = float("inf")
+    # Try to use cached index for fast lookup
+    index = handle.get_or_build_index(topic)
+    target_ns = int(target_time * 1e9)
+    tolerance_ns = int(tolerance * 1e9)
 
-    with AnyReader([Path(path)]) as reader:
+    if index is not None:
+        # Fast path: use index to find nearest timestamp
+        nearest_ts = index.find_nearest(target_ns, tolerance_ns)
+        if nearest_ts is None:
+            logger.debug(f"Index lookup: no message within tolerance for {topic} at {target_time}")
+            return None
+
+        # Scan near the indexed timestamp
+        logger.debug(f"Index hit: {topic} at {target_time} -> {nearest_ts / 1e9}")
+        handle.open_reader()
+        try:
+            reader = handle.reader
+            if reader is None:
+                return None
+
+            connections = [c for c in reader.connections if c.topic == topic]
+            if not connections:
+                return None
+
+            # Scan a small window around the indexed timestamp
+            window_start = nearest_ts - tolerance_ns
+            window_end = nearest_ts + tolerance_ns
+
+            closest_msg = None
+            min_diff = float("inf")
+
+            for conn, timestamp, rawdata in reader.messages(connections=connections):
+                if timestamp < window_start:
+                    continue
+                if timestamp > window_end:
+                    break
+
+                diff = abs(timestamp - target_ns)
+                if diff < min_diff:
+                    min_diff = diff
+                    msg = reader.deserialize(rawdata, conn.msgtype)
+                    closest_msg = BagMessage(
+                        topic=conn.topic,
+                        timestamp=timestamp / 1e9,
+                        data=_msg_to_dict(msg),
+                        msg_type=conn.msgtype,
+                    )
+
+            return closest_msg if closest_msg and min_diff <= tolerance_ns else None
+        finally:
+            handle.close_reader()
+
+    # Slow path: full scan (no index available)
+    logger.debug(f"Index miss: full scan for {topic} at {target_time}")
+    handle.open_reader()
+    try:
+        reader = handle.reader
+        if reader is None:
+            return None
+
         connections = [c for c in reader.connections if c.topic == topic]
         if not connections:
             return None
+
+        closest_msg = None
+        min_diff = float("inf")
 
         for conn, timestamp, rawdata in reader.messages(connections=connections):
             ts_sec = timestamp / 1e9
@@ -207,9 +315,11 @@ def get_message_at_time(
             if ts_sec > target_time + tolerance:
                 break
 
-    if closest_msg and min_diff <= tolerance:
+        if closest_msg and min_diff <= tolerance:
+            return closest_msg
         return closest_msg
-    return closest_msg
+    finally:
+        handle.close_reader()
 
 
 def get_messages_in_range(
@@ -231,13 +341,24 @@ def get_messages_in_range(
 
 def get_topic_schema(topic: str, bag_path: str | None = None) -> dict[str, Any]:
     """Get the message structure/schema for a topic by sampling a message."""
-    path = bag_path or _state.current_bag_path
-    if not path:
-        raise ValueError("No bag path set. Call set_bag_path first or provide a bag_path.")
+    path = _resolve_path(bag_path)
+    handle = _cache.get_handle(path)
 
-    path = os.path.expanduser(path)
+    # Check cache first
+    cache_key = f"schema:{topic}"
+    cached_schema = handle.meta.get(cache_key)
+    if cached_schema is not None:
+        logger.debug(f"Cache hit: schema for {topic}")
+        return cached_schema
 
-    with AnyReader([Path(path)]) as reader:
+    # Cache miss - compute and store
+    logger.debug(f"Cache miss: schema for {topic}")
+    handle.open_reader()
+    try:
+        reader = handle.reader
+        if reader is None:
+            raise RuntimeError(f"Failed to open bag: {path}")
+
         connections = [c for c in reader.connections if c.topic == topic]
         if not connections:
             raise ValueError(f"Topic '{topic}' not found in bag")
@@ -278,7 +399,7 @@ def get_topic_schema(topic: str, bag_path: str | None = None) -> dict[str, Any]:
 
         schema = _extract_schema(sample_data) if sample_data else {}
 
-        return {
+        result = {
             "topic": topic,
             "msg_type": msg_type,
             "message_count": conn.msgcount,
@@ -286,22 +407,49 @@ def get_topic_schema(topic: str, bag_path: str | None = None) -> dict[str, Any]:
             "sample_data": sample_data,
         }
 
+        # Cache the result
+        handle.meta[cache_key] = result
+        return result
+    finally:
+        handle.close_reader()
+
 
 def get_topic_timestamps(topic: str, bag_path: str | None = None) -> list[float]:
     """Get all timestamps for a topic (for statistics)."""
-    path = bag_path or _state.current_bag_path
-    if not path:
-        raise ValueError("No bag path set. Call set_bag_path first or provide a bag_path.")
+    path = _resolve_path(bag_path)
+    handle = _cache.get_handle(path)
 
-    path = os.path.expanduser(path)
+    # Check if we have a cached index
+    index = handle.get_or_build_index(topic)
+    if index is not None:
+        logger.debug(f"Index hit: returning {len(index.timestamps_ns)} timestamps for {topic}")
+        return [t / 1e9 for t in index.timestamps_ns]
+
+    # No index - build one during scan
+    logger.debug(f"Index miss: building timestamps for {topic}")
     timestamps = []
+    timestamps_ns = []
 
-    with AnyReader([Path(path)]) as reader:
+    handle.open_reader()
+    try:
+        reader = handle.reader
+        if reader is None:
+            return []
+
         connections = [c for c in reader.connections if c.topic == topic]
         if not connections:
             return []
 
         for conn, timestamp, rawdata in reader.messages(connections=connections):
             timestamps.append(timestamp / 1e9)
+            timestamps_ns.append(timestamp)
 
-    return timestamps
+        # Store index for future use
+        if timestamps_ns:
+            index = TopicTimeIndex(timestamps_ns=timestamps_ns)
+            handle.store_index(topic, index)
+            logger.debug(f"Built and cached index for {topic}: {len(timestamps_ns)} timestamps")
+
+        return timestamps
+    finally:
+        handle.close_reader()
