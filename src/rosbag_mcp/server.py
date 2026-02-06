@@ -9,12 +9,15 @@ from mcp.types import ImageContent, TextContent, Tool
 
 from rosbag_mcp.tools import (
     analyze_costmap_violations,
+    analyze_diagnostics,
     analyze_imu,
+    analyze_joint_states,
     analyze_lidar_scan,
     analyze_lidar_timeseries,
     analyze_logs,
     analyze_navigation_health,
     analyze_path_tracking,
+    analyze_pointcloud2,
     analyze_topic_stats,
     analyze_trajectory,
     analyze_wheel_slip,
@@ -124,26 +127,33 @@ TOOL_DEFINITIONS = [
     ),
     Tool(
         name="search_messages",
-        description="Search messages using conditions (regex, equals, near_position, threshold)",
+        description="Search messages: regex, equals, contains, field_exists, near_position, with correlation",
         inputSchema={
             "type": "object",
             "properties": {
                 "topic": {"type": "string", "description": "ROS topic name"},
                 "condition_type": {
                     "type": "string",
-                    "enum": ["regex", "equals", "greater_than", "less_than", "near_position"],
-                    "description": "Type of search condition",
+                    "description": "Type: regex, equals, contains, field_exists, greater_than, less_than, near_position",
                 },
+                "value": {"type": "string", "description": "Value to match/compare"},
                 "field": {
                     "type": "string",
-                    "description": "Field path to search (e.g., 'linear.x' for velocity)",
+                    "description": "Optional: field path (e.g., 'pose.position.x')",
                 },
-                "value": {
-                    "type": "string",
-                    "description": "Value to search for. For near_position: 'x,y,radius'",
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum results (default: 10)",
                 },
-                "limit": {"type": "integer", "description": "Maximum results (default: 10)"},
                 "bag_path": {"type": "string", "description": "Optional: specific bag file"},
+                "correlate_topic": {
+                    "type": "string",
+                    "description": "Optional: topic to correlate with matches",
+                },
+                "correlation_tolerance": {
+                    "type": "number",
+                    "description": "Time tolerance for correlation in seconds (default: 0.1)",
+                },
             },
             "required": ["topic", "condition_type", "value"],
         },
@@ -172,19 +182,23 @@ TOOL_DEFINITIONS = [
     ),
     Tool(
         name="analyze_trajectory",
-        description="Compute trajectory metrics: total distance, mean/max speeds, position bounds, waypoints",
+        description="Compute trajectory metrics: distance, path efficiency, angle-based waypoints",
         inputSchema={
             "type": "object",
             "properties": {
                 "pose_topic": {
                     "type": "string",
-                    "description": "Topic with pose/odometry data (default: /odom)",
+                    "description": "Pose topic (default: /odom)",
                 },
                 "start_time": {"type": "number", "description": "Optional: start time"},
                 "end_time": {"type": "number", "description": "Optional: end time"},
                 "include_waypoints": {
                     "type": "boolean",
-                    "description": "Include sampled waypoints (default: false)",
+                    "description": "Include waypoints (default: false)",
+                },
+                "waypoint_angle_threshold": {
+                    "type": "number",
+                    "description": "Heading change threshold in degrees for waypoints (default: 15.0)",
                 },
                 "bag_path": {"type": "string", "description": "Optional: specific bag file"},
             },
@@ -249,13 +263,21 @@ TOOL_DEFINITIONS = [
     ),
     Tool(
         name="get_image_at_time",
-        description="Extract camera image at specific time (returns base64 JPEG)",
+        description="Extract camera image at specific time (supports raw and compressed images)",
         inputSchema={
             "type": "object",
             "properties": {
                 "image_topic": {"type": "string", "description": "Image topic name"},
                 "timestamp": {"type": "number", "description": "Unix timestamp in seconds"},
                 "bag_path": {"type": "string", "description": "Optional: specific bag file"},
+                "max_size": {
+                    "type": "integer",
+                    "description": "Maximum image dimension (default: 1024)",
+                },
+                "quality": {
+                    "type": "integer",
+                    "description": "JPEG quality 1-100 (default: 85)",
+                },
             },
             "required": ["image_topic", "timestamp"],
         },
@@ -590,6 +612,63 @@ TOOL_DEFINITIONS = [
             "required": ["topic1", "topic2", "field1", "field2"],
         },
     ),
+    Tool(
+        name="analyze_pointcloud2",
+        description="Analyze PointCloud2 data: bounds, centroid, intensity statistics",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "description": "PointCloud2 topic (default: /points)",
+                },
+                "timestamp": {
+                    "type": "number",
+                    "description": "Optional: specific timestamp to analyze",
+                },
+                "max_points": {
+                    "type": "integer",
+                    "description": "Maximum points to analyze (default: 10000)",
+                },
+                "bag_path": {"type": "string", "description": "Optional: specific bag file"},
+            },
+            "required": [],
+        },
+    ),
+    Tool(
+        name="analyze_joint_states",
+        description="Analyze JointState data: per-joint statistics and potential issues",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "description": "JointState topic (default: /joint_states)",
+                },
+                "start_time": {"type": "number", "description": "Optional: start time"},
+                "end_time": {"type": "number", "description": "Optional: end time"},
+                "bag_path": {"type": "string", "description": "Optional: specific bag file"},
+            },
+            "required": [],
+        },
+    ),
+    Tool(
+        name="analyze_diagnostics",
+        description="Analyze DiagnosticArray: per-hardware status and error timeline",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "description": "Diagnostics topic (default: /diagnostics)",
+                },
+                "start_time": {"type": "number", "description": "Optional: start time"},
+                "end_time": {"type": "number", "description": "Optional: end time"},
+                "bag_path": {"type": "string", "description": "Optional: specific bag file"},
+            },
+            "required": [],
+        },
+    ),
 ]
 
 TOOL_HANDLERS = {
@@ -616,6 +695,8 @@ TOOL_HANDLERS = {
         field=args.get("field"),
         limit=args.get("limit", 10),
         bag_path=args.get("bag_path"),
+        correlate_topic=args.get("correlate_topic"),
+        correlation_tolerance=args.get("correlation_tolerance", 0.1),
     ),
     "filter_bag": lambda args: filter_bag(
         output_path=args["output_path"],
@@ -629,6 +710,7 @@ TOOL_HANDLERS = {
         start_time=args.get("start_time"),
         end_time=args.get("end_time"),
         include_waypoints=args.get("include_waypoints", False),
+        waypoint_angle_threshold=args.get("waypoint_angle_threshold", 15.0),
         bag_path=args.get("bag_path"),
     ),
     "analyze_lidar_scan": lambda args: analyze_lidar_scan(
@@ -649,6 +731,8 @@ TOOL_HANDLERS = {
         image_topic=args["image_topic"],
         timestamp=args["timestamp"],
         bag_path=args.get("bag_path"),
+        max_size=args.get("max_size", 1024),
+        quality=args.get("quality", 85),
     ),
     "plot_timeseries": lambda args: plot_timeseries(
         fields=args["fields"],
@@ -756,6 +840,24 @@ TOOL_HANDLERS = {
         start_time=args.get("start_time"),
         end_time=args.get("end_time"),
         title=args.get("title", "Topic Comparison"),
+        bag_path=args.get("bag_path"),
+    ),
+    "analyze_pointcloud2": lambda args: analyze_pointcloud2(
+        topic=args.get("topic", "/points"),
+        timestamp=args.get("timestamp"),
+        max_points=args.get("max_points", 10000),
+        bag_path=args.get("bag_path"),
+    ),
+    "analyze_joint_states": lambda args: analyze_joint_states(
+        topic=args.get("topic", "/joint_states"),
+        start_time=args.get("start_time"),
+        end_time=args.get("end_time"),
+        bag_path=args.get("bag_path"),
+    ),
+    "analyze_diagnostics": lambda args: analyze_diagnostics(
+        topic=args.get("topic", "/diagnostics"),
+        start_time=args.get("start_time"),
+        end_time=args.get("end_time"),
         bag_path=args.get("bag_path"),
     ),
 }

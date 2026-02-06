@@ -23,6 +23,11 @@ from rosbag_mcp.tools.analysis import (
 from rosbag_mcp.tools.core import bag_info, list_bags, set_bag_path
 from rosbag_mcp.tools.filter import filter_bag
 from rosbag_mcp.tools.messages import get_message_at_time, get_messages_in_range, search_messages
+from rosbag_mcp.tools.sensors import (
+    analyze_diagnostics,
+    analyze_joint_states,
+    analyze_pointcloud2,
+)
 from rosbag_mcp.tools.visualization import (
     plot_2d,
     plot_comparison,
@@ -58,4 +63,7 @@ __all__ = [
     "analyze_wheel_slip",
     "analyze_navigation_health",
     "analyze_lidar_timeseries",
+    "analyze_pointcloud2",
+    "analyze_joint_states",
+    "analyze_diagnostics",
 ]
