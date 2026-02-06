@@ -11,9 +11,10 @@ import logging
 import os
 import time
 from collections import OrderedDict
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Generic, Hashable, TypeVar
+from typing import Any, Generator, Generic, Hashable, TypeVar
 
 from rosbags.highlevel import AnyReader
 
@@ -245,6 +246,22 @@ class BagHandle:
             self._connections = list(reader.connections)
             self.close_reader(reader)
         return self._connections
+
+    @contextmanager
+    def reader_ctx(self) -> Generator[AnyReader, None, None]:
+        """Context manager for safe reader lifecycle.
+
+        Usage::
+
+            with handle.reader_ctx() as reader:
+                for conn, ts, raw in reader.messages():
+                    ...
+        """
+        reader = self.open_reader()
+        try:
+            yield reader
+        finally:
+            self.close_reader(reader)
 
     def get_or_build_index(self, topic: str) -> TopicTimeIndex | None:
         """Return cached topic index, or None if not yet built."""

@@ -118,12 +118,7 @@ def get_bag_info(bag_path: str | None = None) -> BagInfo:
 
     # Cache miss - compute and store
     logger.debug(f"Cache miss: bag_info for {path}")
-    handle.open_reader()
-    try:
-        reader = handle.reader
-        if reader is None:
-            raise RuntimeError(f"Failed to open bag: {path}")
-
+    with handle.reader_ctx() as reader:
         topics = []
         for conn in reader.connections:
             topics.append(
@@ -151,8 +146,6 @@ def get_bag_info(bag_path: str | None = None) -> BagInfo:
         # Cache the result
         handle.meta["bag_info"] = bag_info
         return bag_info
-    finally:
-        handle.close_reader()
 
 
 def _msg_to_dict(msg: Any) -> Any:
@@ -179,12 +172,7 @@ def read_messages(
     path = _resolve_path(bag_path)
     handle = _cache.get_handle(path)
 
-    handle.open_reader()
-    try:
-        reader = handle.reader
-        if reader is None:
-            raise RuntimeError(f"Failed to open bag: {path}")
-
+    with handle.reader_ctx() as reader:
         connections = reader.connections
         if topics:
             connections = [c for c in connections if c.topic in topics]
@@ -221,8 +209,6 @@ def read_messages(
             index = TopicTimeIndex(timestamps_ns=timestamps_ns)
             handle.store_index(topic_for_index, index)
             logger.debug(f"Built index for {topic_for_index}: {len(timestamps_ns)} timestamps")
-    finally:
-        handle.close_reader()
 
 
 def get_message_at_time(
@@ -245,12 +231,7 @@ def get_message_at_time(
 
         # Scan near the indexed timestamp
         logger.debug(f"Index hit: {topic} at {target_time} -> {nearest_ts / 1e9}")
-        handle.open_reader()
-        try:
-            reader = handle.reader
-            if reader is None:
-                return None
-
+        with handle.reader_ctx() as reader:
             connections = [c for c in reader.connections if c.topic == topic]
             if not connections:
                 return None
@@ -280,17 +261,10 @@ def get_message_at_time(
                     )
 
             return closest_msg if closest_msg and min_diff <= tolerance_ns else None
-        finally:
-            handle.close_reader()
 
     # Slow path: full scan (no index available)
     logger.debug(f"Index miss: full scan for {topic} at {target_time}")
-    handle.open_reader()
-    try:
-        reader = handle.reader
-        if reader is None:
-            return None
-
+    with handle.reader_ctx() as reader:
         connections = [c for c in reader.connections if c.topic == topic]
         if not connections:
             return None
@@ -318,8 +292,6 @@ def get_message_at_time(
         if closest_msg and min_diff <= tolerance:
             return closest_msg
         return closest_msg
-    finally:
-        handle.close_reader()
 
 
 def get_messages_in_range(
@@ -353,12 +325,7 @@ def get_topic_schema(topic: str, bag_path: str | None = None) -> dict[str, Any]:
 
     # Cache miss - compute and store
     logger.debug(f"Cache miss: schema for {topic}")
-    handle.open_reader()
-    try:
-        reader = handle.reader
-        if reader is None:
-            raise RuntimeError(f"Failed to open bag: {path}")
-
+    with handle.reader_ctx() as reader:
         connections = [c for c in reader.connections if c.topic == topic]
         if not connections:
             raise ValueError(f"Topic '{topic}' not found in bag")
@@ -410,8 +377,6 @@ def get_topic_schema(topic: str, bag_path: str | None = None) -> dict[str, Any]:
         # Cache the result
         handle.meta[cache_key] = result
         return result
-    finally:
-        handle.close_reader()
 
 
 def get_topic_timestamps(topic: str, bag_path: str | None = None) -> list[float]:
@@ -430,12 +395,7 @@ def get_topic_timestamps(topic: str, bag_path: str | None = None) -> list[float]
     timestamps = []
     timestamps_ns = []
 
-    handle.open_reader()
-    try:
-        reader = handle.reader
-        if reader is None:
-            return []
-
+    with handle.reader_ctx() as reader:
         connections = [c for c in reader.connections if c.topic == topic]
         if not connections:
             return []
@@ -451,5 +411,3 @@ def get_topic_timestamps(topic: str, bag_path: str | None = None) -> list[float]
             logger.debug(f"Built and cached index for {topic}: {len(timestamps_ns)} timestamps")
 
         return timestamps
-    finally:
-        handle.close_reader()

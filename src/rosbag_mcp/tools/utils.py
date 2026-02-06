@@ -5,7 +5,14 @@ import logging
 from dataclasses import asdict
 from typing import Any
 
+from mcp.types import TextContent
+
 logger = logging.getLogger(__name__)
+
+
+def text_result(obj: Any) -> list[TextContent]:
+    """Wrap an object as a serialized TextContent response."""
+    return [TextContent(type="text", text=json_serialize(obj))]
 
 
 def json_serialize(obj: Any) -> str:

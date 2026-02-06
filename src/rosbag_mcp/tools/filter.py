@@ -13,6 +13,34 @@ from rosbag_mcp.bag_reader import get_current_bag_path
 logger = logging.getLogger(__name__)
 
 
+def _write_filtered(
+    writer: Ros1Writer | Ros2Writer,
+    reader: AnyReader,
+    topics: list[str],
+    start_time: float | None,
+    end_time: float | None,
+) -> int:
+    """Copy matching messages from reader to writer. Returns message count."""
+    topic_set = set(topics)
+    connections = {}
+    for conn in reader.connections:
+        if conn.topic in topic_set:
+            connections[conn.topic] = writer.add_connection(conn.topic, conn.msgtype)
+
+    count = 0
+    for conn, timestamp, rawdata in reader.messages():
+        if conn.topic not in topic_set:
+            continue
+        ts_sec = timestamp / 1e9
+        if start_time and ts_sec < start_time:
+            continue
+        if end_time and ts_sec > end_time:
+            continue
+        writer.write(connections[conn.topic], timestamp, rawdata)
+        count += 1
+    return count
+
+
 async def filter_bag(
     output_path: str,
     topics: list[str],
@@ -22,48 +50,17 @@ async def filter_bag(
 ) -> list[TextContent]:
     logger.info(f"Filtering bag to {output_path} with topics: {topics}")
     output_ext = Path(output_path).suffix
-    message_count = 0
     source_path = bag_path or get_current_bag_path()
     logger.debug(f"Source bag: {source_path}, output format: {output_ext}")
 
     with AnyReader([Path(source_path)]) as reader:
         if output_ext == ".bag":
             with Ros1Writer(Path(output_path)) as writer:
-                connections = {}
-                for conn in reader.connections:
-                    if conn.topic in topics:
-                        connections[conn.topic] = writer.add_connection(conn.topic, conn.msgtype)
-
-                for conn, timestamp, rawdata in reader.messages():
-                    if conn.topic not in topics:
-                        continue
-                    ts_sec = timestamp / 1e9
-                    if start_time and ts_sec < start_time:
-                        continue
-                    if end_time and ts_sec > end_time:
-                        continue
-
-                    writer.write(connections[conn.topic], timestamp, rawdata)
-                    message_count += 1
+                message_count = _write_filtered(writer, reader, topics, start_time, end_time)
         else:
             Path(output_path).mkdir(parents=True, exist_ok=True)
             with Ros2Writer(Path(output_path)) as writer:
-                connections = {}
-                for conn in reader.connections:
-                    if conn.topic in topics:
-                        connections[conn.topic] = writer.add_connection(conn.topic, conn.msgtype)
-
-                for conn, timestamp, rawdata in reader.messages():
-                    if conn.topic not in topics:
-                        continue
-                    ts_sec = timestamp / 1e9
-                    if start_time and ts_sec < start_time:
-                        continue
-                    if end_time and ts_sec > end_time:
-                        continue
-
-                    writer.write(connections[conn.topic], timestamp, rawdata)
-                    message_count += 1
+                message_count = _write_filtered(writer, reader, topics, start_time, end_time)
 
     logger.info(f"Filtered bag created: {message_count} messages written to {output_path}")
     return [
