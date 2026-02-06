@@ -1,0 +1,171 @@
+# ROS Message Field Schemas
+# Defines field paths for common ROS message types
+
+# Navigation messages
+nav_msgs/Odometry:
+  position_fields:
+    - pose.pose.position.x
+    - pose.pose.position.y
+    - pose.pose.position.z
+  velocity_fields:
+    - twist.twist.linear.x
+    - twist.twist.angular.z
+  orientation_fields:
+    - pose.pose.orientation.x
+    - pose.pose.orientation.y
+    - pose.pose.orientation.z
+    - pose.pose.orientation.w
+  timestamp_field: header.stamp
+
+nav_msgs/msg/Odometry:
+  position_fields:
+    - pose.pose.position.x
+    - pose.pose.position.y
+    - pose.pose.position.z
+  velocity_fields:
+    - twist.twist.linear.x
+    - twist.twist.angular.z
+  orientation_fields:
+    - pose.pose.orientation.x
+    - pose.pose.orientation.y
+    - pose.pose.orientation.z
+    - pose.pose.orientation.w
+  timestamp_field: header.stamp
+
+# Geometry messages
+geometry_msgs/PoseStamped:
+  position_fields:
+    - pose.position.x
+    - pose.position.y
+    - pose.position.z
+  orientation_fields:
+    - pose.orientation.x
+    - pose.orientation.y
+    - pose.orientation.z
+    - pose.orientation.w
+  timestamp_field: header.stamp
+
+geometry_msgs/msg/PoseStamped:
+  position_fields:
+    - pose.position.x
+    - pose.position.y
+    - pose.position.z
+  orientation_fields:
+    - pose.orientation.x
+    - pose.orientation.y
+    - pose.orientation.z
+    - pose.orientation.w
+  timestamp_field: header.stamp
+
+# Sensor messages
+sensor_msgs/LaserScan:
+  range_fields:
+    - ranges
+  angle_fields:
+    - angle_min
+    - angle_max
+    - angle_increment
+  intensity_fields:
+    - intensities
+  timestamp_field: header.stamp
+
+sensor_msgs/msg/LaserScan:
+  range_fields:
+    - ranges
+  angle_fields:
+    - angle_min
+    - angle_max
+    - angle_increment
+  intensity_fields:
+    - intensities
+  timestamp_field: header.stamp
+
+sensor_msgs/Imu:
+  linear_acceleration_fields:
+    - linear_acceleration.x
+    - linear_acceleration.y
+    - linear_acceleration.z
+  angular_velocity_fields:
+    - angular_velocity.x
+    - angular_velocity.y
+    - angular_velocity.z
+  orientation_fields:
+    - orientation.x
+    - orientation.y
+    - orientation.z
+    - orientation.w
+  timestamp_field: header.stamp
+
+sensor_msgs/msg/Imu:
+  linear_acceleration_fields:
+    - linear_acceleration.x
+    - linear_acceleration.y
+    - linear_acceleration.z
+  angular_velocity_fields:
+    - angular_velocity.x
+    - angular_velocity.y
+    - angular_velocity.z
+  orientation_fields:
+    - orientation.x
+    - orientation.y
+    - orientation.z
+    - orientation.w
+  timestamp_field: header.stamp
+
+sensor_msgs/JointState:
+  position_fields:
+    - position
+  velocity_fields:
+    - velocity
+  effort_fields:
+    - effort
+  name_field: name
+  timestamp_field: header.stamp
+
+sensor_msgs/msg/JointState:
+  position_fields:
+    - position
+  velocity_fields:
+    - velocity
+  effort_fields:
+    - effort
+  name_field: name
+  timestamp_field: header.stamp
+
+sensor_msgs/PointCloud2:
+  data_fields:
+    - data
+  height_field: height
+  width_field: width
+  timestamp_field: header.stamp
+
+sensor_msgs/msg/PointCloud2:
+  data_fields:
+    - data
+  height_field: height
+  width_field: width
+  timestamp_field: header.stamp
+
+# Diagnostic messages
+diagnostic_msgs/DiagnosticArray:
+  status_fields:
+    - status
+  timestamp_field: header.stamp
+
+diagnostic_msgs/msg/DiagnosticArray:
+  status_fields:
+    - status
+  timestamp_field: header.stamp
+
+# Log messages
+rosgraph_msgs/Log:
+  level_field: level
+  message_field: msg
+  name_field: name
+  timestamp_field: header.stamp
+
+rcl_interfaces/msg/Log:
+  level_field: level
+  message_field: msg
+  name_field: name
+  timestamp_field: stamp
