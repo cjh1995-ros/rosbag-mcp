@@ -1,5 +1,7 @@
 # ROSBag MCP Server
 
+The code is inspired by [ROSBag MCP Server: Analyzing Robot Data with LLMs for Agentic Embodied AI Applications](https://arxiv.org/pdf/2511.03497).
+
 An MCP (Model Context Protocol) server for analyzing ROS and ROS 2 bag files with LLMs. Enables natural language interaction with robotic datasets for debugging, performance evaluation, and extracting insights.
 
 ## Features
