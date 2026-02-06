@@ -1,7 +1,7 @@
 __pycache__/
 .DS_Store
 .venv/
-#.ruff_cache/
-#test_bag/
+.ruff_cache/
+.sisphus
 ARCHITECTURE_REVIEW.md
 UPGRADE_REPORT.md
