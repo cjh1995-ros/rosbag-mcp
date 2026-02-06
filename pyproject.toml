@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rosbag-mcp"
-version = "0.1.1"
+version = "0.2.0"
 description = "MCP server for analyzing ROS and ROS 2 bag files with LLMs"
 readme = "README.md"
 requires-python = ">=3.10"

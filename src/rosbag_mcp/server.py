@@ -4,36 +4,36 @@ import asyncio
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, ImageContent, Tool
+from mcp.types import ImageContent, TextContent, Tool
 
 from rosbag_mcp.tools import (
-    set_bag_path,
-    list_bags,
+    analyze_costmap_violations,
+    analyze_imu,
+    analyze_lidar_scan,
+    analyze_lidar_timeseries,
+    analyze_logs,
+    analyze_navigation_health,
+    analyze_path_tracking,
+    analyze_topic_stats,
+    analyze_trajectory,
+    analyze_wheel_slip,
     bag_info,
+    compare_topics,
+    detect_events,
+    export_to_csv,
+    filter_bag,
+    get_image_at_time,
     get_message_at_time,
     get_messages_in_range,
-    search_messages,
-    filter_bag,
-    analyze_trajectory,
-    analyze_lidar_scan,
-    analyze_logs,
     get_tf_tree,
-    get_image_at_time,
-    plot_timeseries,
-    plot_2d,
-    plot_lidar_scan,
-    plot_comparison,
     get_topic_schema,
-    analyze_imu,
-    analyze_topic_stats,
-    compare_topics,
-    export_to_csv,
-    detect_events,
-    analyze_costmap_violations,
-    analyze_path_tracking,
-    analyze_wheel_slip,
-    analyze_navigation_health,
-    analyze_lidar_timeseries,
+    list_bags,
+    plot_2d,
+    plot_comparison,
+    plot_lidar_scan,
+    plot_timeseries,
+    search_messages,
+    set_bag_path,
 )
 
 server = Server("rosbag-mcp")
@@ -409,7 +409,13 @@ TOOL_DEFINITIONS = [
                 "field": {"type": "string", "description": "Field path to analyze"},
                 "event_type": {
                     "type": "string",
-                    "enum": ["threshold", "threshold_below", "sudden_change", "anomaly", "stoppage"],
+                    "enum": [
+                        "threshold",
+                        "threshold_below",
+                        "sudden_change",
+                        "anomaly",
+                        "stoppage",
+                    ],
                     "description": "Type of event to detect",
                 },
                 "threshold": {
@@ -572,7 +578,10 @@ TOOL_DEFINITIONS = [
                 },
                 "start_time": {"type": "number", "description": "Optional: start time"},
                 "end_time": {"type": "number", "description": "Optional: end time"},
-                "title": {"type": "string", "description": "Plot title (default: Topic Comparison)"},
+                "title": {
+                    "type": "string",
+                    "description": "Plot title (default: Topic Comparison)",
+                },
                 "bag_path": {"type": "string", "description": "Optional: specific bag file"},
             },
             "required": ["topic1", "topic2", "field1", "field2"],

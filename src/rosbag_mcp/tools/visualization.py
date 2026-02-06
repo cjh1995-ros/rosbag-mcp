@@ -8,13 +8,15 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from mcp.types import TextContent, ImageContent
+from mcp.types import ImageContent, TextContent
 
 from rosbag_mcp.bag_reader import (
     get_message_at_time as _get_message_at_time,
+)
+from rosbag_mcp.bag_reader import (
     read_messages,
 )
-from rosbag_mcp.tools.utils import get_nested_field, extract_position
+from rosbag_mcp.tools.utils import extract_position, get_nested_field
 
 
 async def plot_timeseries(

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import io
 import math
 from collections import defaultdict
 from pathlib import Path
@@ -11,11 +10,12 @@ from mcp.types import TextContent
 
 from rosbag_mcp.bag_reader import (
     get_topic_schema as _get_topic_schema,
+)
+from rosbag_mcp.bag_reader import (
     get_topic_timestamps,
     read_messages,
-    get_message_at_time as _get_message_at_time,
 )
-from rosbag_mcp.tools.utils import json_serialize, get_nested_field
+from rosbag_mcp.tools.utils import get_nested_field, json_serialize
 
 
 async def get_topic_schema(
@@ -751,18 +751,25 @@ async def analyze_wheel_slip(
                 mean_slip = float(np.mean(event_slip))
                 if mean_slip < -slip_threshold:
                     slip_type = "backward_slip"
-                elif np.mean(odom_values[slip_start_idx:i]) < -0.01 and np.mean(interp_cmd[slip_start_idx:i]) > 0.01:
+                elif (
+                    np.mean(odom_values[slip_start_idx:i]) < -0.01
+                    and np.mean(interp_cmd[slip_start_idx:i]) > 0.01
+                ):
                     slip_type = "sliding"
                 else:
                     slip_type = "forward_slip"
-                slip_events.append({
-                    "start_time": float(odom_times[slip_start_idx]),
-                    "end_time": float(odom_times[i - 1]),
-                    "duration_s": round(float(odom_times[i - 1] - odom_times[slip_start_idx]), 3),
-                    "max_slip": round(float(np.max(event_abs_slip)), 4),
-                    "mean_slip": round(float(np.mean(event_abs_slip)), 4),
-                    "type": slip_type,
-                })
+                slip_events.append(
+                    {
+                        "start_time": float(odom_times[slip_start_idx]),
+                        "end_time": float(odom_times[i - 1]),
+                        "duration_s": round(
+                            float(odom_times[i - 1] - odom_times[slip_start_idx]), 3
+                        ),
+                        "max_slip": round(float(np.max(event_abs_slip)), 4),
+                        "mean_slip": round(float(np.mean(event_abs_slip)), 4),
+                        "type": slip_type,
+                    }
+                )
                 in_slip = False
 
     # Handle trailing slip event
@@ -772,18 +779,23 @@ async def analyze_wheel_slip(
         mean_slip = float(np.mean(event_slip))
         if mean_slip < -slip_threshold:
             slip_type = "backward_slip"
-        elif np.mean(odom_values[slip_start_idx:]) < -0.01 and np.mean(interp_cmd[slip_start_idx:]) > 0.01:
+        elif (
+            np.mean(odom_values[slip_start_idx:]) < -0.01
+            and np.mean(interp_cmd[slip_start_idx:]) > 0.01
+        ):
             slip_type = "sliding"
         else:
             slip_type = "forward_slip"
-        slip_events.append({
-            "start_time": float(odom_times[slip_start_idx]),
-            "end_time": float(odom_times[-1]),
-            "duration_s": round(float(odom_times[-1] - odom_times[slip_start_idx]), 3),
-            "max_slip": round(float(np.max(event_abs_slip)), 4),
-            "mean_slip": round(float(np.mean(event_abs_slip)), 4),
-            "type": slip_type,
-        })
+        slip_events.append(
+            {
+                "start_time": float(odom_times[slip_start_idx]),
+                "end_time": float(odom_times[-1]),
+                "duration_s": round(float(odom_times[-1] - odom_times[slip_start_idx]), 3),
+                "max_slip": round(float(np.max(event_abs_slip)), 4),
+                "mean_slip": round(float(np.mean(event_abs_slip)), 4),
+                "type": slip_type,
+            }
+        )
 
     total_slip_duration = sum(e["duration_s"] for e in slip_events)
     max_backward = float(np.min(odom_values))
@@ -859,14 +871,18 @@ async def analyze_navigation_health(
         data = msg.data
         msg_level = data.get("level", data.get("severity", 0))
         if isinstance(msg_level, str):
-            msg_level = {"DEBUG": 1, "INFO": 2, "WARN": 4, "ERROR": 8, "FATAL": 16}.get(msg_level, 0)
+            msg_level = {"DEBUG": 1, "INFO": 2, "WARN": 4, "ERROR": 8, "FATAL": 16}.get(
+                msg_level, 0
+            )
 
         all_timestamps.append(msg.timestamp)
         msg_text = data.get("msg", data.get("message", ""))
 
         if msg_level >= 8:  # ERROR or FATAL
             msg_lower = msg_text.lower()
-            if "failed to find a plan" in msg_lower or ("planning" in msg_lower and "fail" in msg_lower):
+            if "failed to find a plan" in msg_lower or (
+                "planning" in msg_lower and "fail" in msg_lower
+            ):
                 error_categories["planning_failure"] += 1
             elif "collision" in msg_lower or "in collision" in msg_lower:
                 error_categories["collision_in_costmap"] += 1
@@ -875,10 +891,12 @@ async def analyze_navigation_health(
             else:
                 error_categories["other"] += 1
 
-            errors.append({
-                "timestamp": msg.timestamp,
-                "message": msg_text[:200],
-            })
+            errors.append(
+                {
+                    "timestamp": msg.timestamp,
+                    "message": msg_text[:200],
+                }
+            )
 
         elif msg_level == 4:  # WARN
             msg_lower = msg_text.lower()
@@ -889,10 +907,12 @@ async def analyze_navigation_health(
             else:
                 warning_categories["other"] += 1
 
-            warnings.append({
-                "timestamp": msg.timestamp,
-                "message": msg_text[:200],
-            })
+            warnings.append(
+                {
+                    "timestamp": msg.timestamp,
+                    "message": msg_text[:200],
+                }
+            )
 
     # Collect recovery events
     recovery_events = []
@@ -1017,12 +1037,14 @@ async def analyze_lidar_timeseries(
         obstacle_counts.append(obstacle_count)
         valid_ray_ratios.append(valid_ratio)
 
-        timeline.append({
-            "timestamp": msg.timestamp,
-            "min_distance": round(min_dist, 3),
-            "obstacle_count": obstacle_count,
-            "valid_rays": int(len(valid_ranges)),
-        })
+        timeline.append(
+            {
+                "timestamp": msg.timestamp,
+                "min_distance": round(min_dist, 3),
+                "obstacle_count": obstacle_count,
+                "valid_rays": int(len(valid_ranges)),
+            }
+        )
 
         if min_dist < closest_approach["distance_m"]:
             closest_approach = {

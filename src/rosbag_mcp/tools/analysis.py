@@ -6,13 +6,15 @@ import math
 import re
 
 import numpy as np
-from mcp.types import TextContent, ImageContent
+from mcp.types import ImageContent, TextContent
 
 from rosbag_mcp.bag_reader import (
     get_message_at_time as _get_message_at_time,
+)
+from rosbag_mcp.bag_reader import (
     read_messages,
 )
-from rosbag_mcp.tools.utils import json_serialize, extract_position, extract_velocity
+from rosbag_mcp.tools.utils import extract_position, extract_velocity, json_serialize
 
 
 async def analyze_trajectory(
@@ -207,6 +209,7 @@ async def analyze_logs(
 
     if not logs and msg_count == 0:
         from rosbag_mcp.bag_reader import get_bag_info
+
         try:
             info = get_bag_info(bag_path)
             available = [t["name"] for t in info.topics]

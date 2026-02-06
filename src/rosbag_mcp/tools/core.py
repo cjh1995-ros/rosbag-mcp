@@ -5,9 +5,13 @@ from dataclasses import asdict
 from mcp.types import TextContent
 
 from rosbag_mcp.bag_reader import (
-    set_bag_path as _set_bag_path,
-    list_bags as _list_bags,
     get_bag_info as _get_bag_info,
+)
+from rosbag_mcp.bag_reader import (
+    list_bags as _list_bags,
+)
+from rosbag_mcp.bag_reader import (
+    set_bag_path as _set_bag_path,
 )
 from rosbag_mcp.tools.utils import json_serialize
 
