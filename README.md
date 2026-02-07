@@ -1,3 +1,6 @@
+> **Warning**
+> This code is made by ai
+
 # ROSBag MCP Server
 
 The code is inspired by [ROSBag MCP Server: Analyzing Robot Data with LLMs for Agentic Embodied AI Applications](https://arxiv.org/pdf/2511.03497).
