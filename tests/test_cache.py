@@ -2,83 +2,20 @@
 
 from __future__ import annotations
 
-import time
+from dataclasses import dataclass
+from typing import Any
 
 import pytest
 
-from rosbag_mcp.cache import BagKey, SizeAwareSLRU, TopicTimeIndex
+from rosbag_mcp.cache import BagKey, MessageCache, TopicTimeIndex
 
 
-class TestSizeAwareSLRU:
-    """Test SizeAwareSLRU cache implementation."""
-
-    def test_put_and_get(self):
-        """Test basic put and get operations."""
-        cache = SizeAwareSLRU[str, str](max_bytes=1000)
-        cache.put("key1", "value1", size_bytes=100)
-        assert cache.get("key1") == "value1"
-        assert cache.hits == 1
-        assert cache.misses == 0
-
-    def test_miss(self):
-        """Test cache miss."""
-        cache = SizeAwareSLRU[str, str](max_bytes=1000)
-        assert cache.get("nonexistent") is None
-        assert cache.misses == 1
-        assert cache.hits == 0
-
-    def test_promotion_to_protected(self):
-        """Test promotion from probation to protected on second access."""
-        cache = SizeAwareSLRU[str, str](max_bytes=1000)
-        cache.put("key1", "value1", size_bytes=100)
-        # First get: still in probation
-        assert cache.get("key1") == "value1"
-        # Second get: promoted to protected
-        assert cache.get("key1") == "value1"
-        assert cache.hits == 2
-
-    def test_eviction_when_over_budget(self):
-        """Test eviction when cache exceeds max_bytes."""
-        cache = SizeAwareSLRU[str, str](max_bytes=250)
-        cache.put("key1", "value1", size_bytes=100)
-        cache.put("key2", "value2", size_bytes=100)
-        cache.put("key3", "value3", size_bytes=100)  # Should evict key1
-        assert cache.get("key1") is None  # Evicted
-        assert cache.get("key2") == "value2"
-        assert cache.get("key3") == "value3"
-
-    def test_ttl_expiration(self):
-        """Test TTL-based expiration."""
-        cache = SizeAwareSLRU[str, str](max_bytes=1000)
-        cache.put("key1", "value1", size_bytes=100, ttl_s=0.1)
-        assert cache.get("key1") == "value1"
-        time.sleep(0.15)
-        assert cache.get("key1") is None  # Expired
-
-    def test_byte_accounting(self):
-        """Test byte accounting is accurate."""
-        cache = SizeAwareSLRU[str, str](max_bytes=1000)
-        cache.put("key1", "value1", size_bytes=100)
-        cache.put("key2", "value2", size_bytes=200)
-        assert cache.total_bytes == 300
-
-    def test_delete(self):
-        """Test delete operation."""
-        cache = SizeAwareSLRU[str, str](max_bytes=1000)
-        cache.put("key1", "value1", size_bytes=100)
-        cache.delete("key1")
-        assert cache.get("key1") is None
-        assert cache.total_bytes == 0
-
-    def test_clear(self):
-        """Test clear operation."""
-        cache = SizeAwareSLRU[str, str](max_bytes=1000)
-        cache.put("key1", "value1", size_bytes=100)
-        cache.put("key2", "value2", size_bytes=100)
-        cache.clear()
-        assert cache.get("key1") is None
-        assert cache.get("key2") is None
-        assert cache.total_bytes == 0
+@dataclass
+class FakeBagMessage:
+    topic: str
+    timestamp: float
+    data: dict[str, Any]
+    msg_type: str
 
 
 class TestTopicTimeIndex:
@@ -185,3 +122,111 @@ class TestBagKey:
         key = BagKey(realpath="/path/to/bag.bag", size=1000, mtime_ns=123456789)
         with pytest.raises(Exception):  # FrozenInstanceError or AttributeError
             key.realpath = "/new/path.bag"  # type: ignore
+
+
+def _make_msgs(topic: str, count: int, start_ts: float = 1.0) -> list[FakeBagMessage]:
+    return [
+        FakeBagMessage(
+            topic=topic,
+            timestamp=start_ts + i * 0.1,
+            data={"value": i},
+            msg_type="std_msgs/msg/Float64",
+        )
+        for i in range(count)
+    ]
+
+
+class TestMessageCache:
+    def test_commit_and_get(self):
+        cache = MessageCache()
+        msgs = _make_msgs("/odom", 10)
+        cache.commit("/odom", msgs, 800)
+        assert cache.has("/odom")
+        assert cache.get("/odom") is msgs
+        assert cache.total_bytes == 800
+
+    def test_get_missing_topic(self):
+        cache = MessageCache()
+        assert not cache.has("/odom")
+        assert cache.get("/odom") is None
+
+    def test_get_range_full(self):
+        cache = MessageCache()
+        msgs = _make_msgs("/odom", 10, start_ts=1.0)
+        cache.commit("/odom", msgs, 800)
+        result = cache.get_range("/odom", None, None)
+        assert result is msgs
+
+    def test_get_range_sliced(self):
+        cache = MessageCache()
+        msgs = _make_msgs("/odom", 100, start_ts=0.0)
+        cache.commit("/odom", msgs, 8000)
+        start_ns = int(2.0 * 1e9)
+        end_ns = int(5.0 * 1e9)
+        result = cache.get_range("/odom", start_ns, end_ns)
+        assert result is not None
+        assert all(2.0 <= m.timestamp <= 5.0 for m in result)
+        assert len(result) > 0
+        assert len(result) < 100
+
+    def test_get_range_missing_topic(self):
+        cache = MessageCache()
+        assert cache.get_range("/odom", None, None) is None
+
+    def test_can_cache_accepts_small(self):
+        cache = MessageCache()
+        assert cache.can_cache(raw_msg_size=500, msg_count=1000)
+
+    def test_can_cache_rejects_large_message(self):
+        cache = MessageCache()
+        assert not cache.can_cache(raw_msg_size=200_000, msg_count=100)
+
+    def test_can_cache_rejects_over_per_topic_budget(self):
+        cache = MessageCache(max_per_topic=1000)
+        assert not cache.can_cache(raw_msg_size=100, msg_count=20)
+
+    def test_can_cache_rejects_over_total_budget(self):
+        cache = MessageCache(max_bytes=5000)
+        cache.commit("/a", _make_msgs("/a", 5), 4500)
+        assert not cache.can_cache(raw_msg_size=100, msg_count=10)
+
+    def test_budget_ok_tracks_total(self):
+        cache = MessageCache(max_bytes=2000, max_per_topic=1500)
+        cache.commit("/a", _make_msgs("/a", 5), 1000)
+        assert cache.budget_ok(500)
+        assert not cache.budget_ok(1500)
+
+    def test_budget_ok_per_topic_limit(self):
+        cache = MessageCache(max_per_topic=1000)
+        assert cache.budget_ok(999)
+        assert not cache.budget_ok(1001)
+
+    def test_clear(self):
+        cache = MessageCache()
+        cache.commit("/odom", _make_msgs("/odom", 10), 800)
+        cache.commit("/imu", _make_msgs("/imu", 10), 400)
+        assert cache.total_bytes == 1200
+        cache.clear()
+        assert cache.total_bytes == 0
+        assert not cache.has("/odom")
+        assert not cache.has("/imu")
+
+    def test_stats(self):
+        cache = MessageCache()
+        cache.commit("/odom", _make_msgs("/odom", 5), 500)
+        s = cache.stats()
+        assert "/odom" in s["cached_topics"]
+        assert s["total_bytes"] == 500
+        assert s["per_topic"]["/odom"]["messages"] == 5
+
+    def test_multiple_topics(self):
+        cache = MessageCache()
+        cache.commit("/odom", _make_msgs("/odom", 10), 800)
+        cache.commit("/imu", _make_msgs("/imu", 20), 400)
+        assert cache.has("/odom")
+        assert cache.has("/imu")
+        assert cache.total_bytes == 1200
+        odom = cache.get("/odom")
+        imu = cache.get("/imu")
+        assert odom is not None and len(odom) == 10
+        assert imu is not None and len(imu) == 20

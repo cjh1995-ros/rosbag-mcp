@@ -1,7 +1,7 @@
 """Tiered caching system for rosbag access.
 
 Provides connection pooling (reusable AnyReader handles), metadata caching,
-topic timestamp indexing, and size-aware SLRU eviction.
+and topic timestamp indexing.
 """
 
 from __future__ import annotations
@@ -14,14 +14,11 @@ from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Generator, Generic, Hashable, TypeVar
+from typing import Any, Generator
 
 from rosbags.highlevel import AnyReader
 
 logger = logging.getLogger(__name__)
-
-K = TypeVar("K", bound=Hashable)
-V = TypeVar("V")
 
 
 # ---------------------------------------------------------------------------
@@ -41,121 +38,6 @@ def bag_key_for(path: str | Path) -> BagKey:
     rp = os.path.realpath(str(path))
     st = os.stat(rp)
     return BagKey(realpath=rp, size=st.st_size, mtime_ns=st.st_mtime_ns)
-
-
-# ---------------------------------------------------------------------------
-# SizeAwareSLRU — segmented LRU with per-entry byte accounting
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class _CacheEntry(Generic[V]):
-    value: V
-    size_bytes: int
-    expires_at: float | None
-    hits: int = 0
-
-
-class SizeAwareSLRU(Generic[K, V]):
-    """Segmented LRU (probation → protected) with size-based eviction and TTL.
-
-    * New entries land in *probation*.
-    * A second access promotes to *protected*.
-    * Evictions drain probation first, then protected.
-    """
-
-    def __init__(self, max_bytes: int, protected_ratio: float = 0.8) -> None:
-        self.max_bytes = max_bytes
-        self._protected_max = int(max_bytes * protected_ratio)
-        self._prob: OrderedDict[K, _CacheEntry[V]] = OrderedDict()
-        self._prot: OrderedDict[K, _CacheEntry[V]] = OrderedDict()
-        self._prob_bytes = 0
-        self._prot_bytes = 0
-        self.hits = 0
-        self.misses = 0
-
-    # -- public API ----------------------------------------------------------
-
-    @property
-    def total_bytes(self) -> int:
-        return self._prob_bytes + self._prot_bytes
-
-    def get(self, key: K) -> V | None:
-        now = time.monotonic()
-
-        # Check protected first (hot segment)
-        entry = self._prot.get(key)
-        if entry is not None:
-            if entry.expires_at is not None and now >= entry.expires_at:
-                self._del_prot(key)
-                self.misses += 1
-                return None
-            entry.hits += 1
-            self._prot.move_to_end(key)
-            self.hits += 1
-            return entry.value
-
-        # Check probation
-        entry = self._prob.get(key)
-        if entry is None:
-            self.misses += 1
-            return None
-        if entry.expires_at is not None and now >= entry.expires_at:
-            self._del_prob(key)
-            self.misses += 1
-            return None
-
-        # Promote to protected on second hit
-        self._del_prob(key)
-        entry.hits += 1
-        self._prot[key] = entry
-        self._prot_bytes += entry.size_bytes
-        self._enforce()
-        self.hits += 1
-        return entry.value
-
-    def put(self, key: K, value: V, size_bytes: int, ttl_s: float | None = None) -> None:
-        expires_at = None if ttl_s is None else (time.monotonic() + ttl_s)
-        # Remove from both segments if present
-        if key in self._prot:
-            self._del_prot(key)
-        if key in self._prob:
-            self._del_prob(key)
-        entry = _CacheEntry(value=value, size_bytes=size_bytes, expires_at=expires_at)
-        self._prob[key] = entry
-        self._prob_bytes += entry.size_bytes
-        self._enforce()
-
-    def delete(self, key: K) -> None:
-        if key in self._prot:
-            self._del_prot(key)
-        elif key in self._prob:
-            self._del_prob(key)
-
-    def clear(self) -> None:
-        self._prob.clear()
-        self._prot.clear()
-        self._prob_bytes = 0
-        self._prot_bytes = 0
-
-    # -- internals -----------------------------------------------------------
-
-    def _del_prob(self, key: K) -> None:
-        entry = self._prob.pop(key)
-        self._prob_bytes -= entry.size_bytes
-
-    def _del_prot(self, key: K) -> None:
-        entry = self._prot.pop(key)
-        self._prot_bytes -= entry.size_bytes
-
-    def _enforce(self) -> None:
-        # Evict from probation first, then protected, until under budget.
-        while self.total_bytes > self.max_bytes and self._prob:
-            k = next(iter(self._prob))
-            self._del_prob(k)
-        while self.total_bytes > self.max_bytes and self._prot:
-            k = next(iter(self._prot))
-            self._del_prot(k)
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +79,107 @@ class TopicTimeIndex:
 
 
 # ---------------------------------------------------------------------------
+# MessageCache — per-handle message storage with size gating
+# ---------------------------------------------------------------------------
+
+_DEFAULT_MAX_BYTES = 512 * 1024 * 1024  # 512 MB total
+_DEFAULT_MAX_PER_TOPIC = 50 * 1024 * 1024  # 50 MB per topic
+_RAW_SIZE_GATE = 100_000  # 100 KB — skip caching if first message exceeds this
+
+
+class MessageCache:
+    """Size-gated per-topic message cache.
+
+    Stores deserialized messages for topics whose raw payload is small enough.
+    Serves time-filtered queries via binary search on cached timestamps.
+    """
+
+    def __init__(
+        self,
+        max_bytes: int = _DEFAULT_MAX_BYTES,
+        max_per_topic: int = _DEFAULT_MAX_PER_TOPIC,
+    ) -> None:
+        self.max_bytes = max_bytes
+        self.max_per_topic = max_per_topic
+        self._topics: dict[str, list[Any]] = {}
+        self._topic_bytes: dict[str, int] = {}
+        self._total_bytes = 0
+
+    def has(self, topic: str) -> bool:
+        return topic in self._topics
+
+    def can_cache(self, raw_msg_size: int, msg_count: int) -> bool:
+        if raw_msg_size > _RAW_SIZE_GATE:
+            return False
+        estimated = raw_msg_size * msg_count
+        if estimated > self.max_per_topic:
+            return False
+        if self._total_bytes + estimated > self.max_bytes:
+            return False
+        return True
+
+    def budget_ok(self, collected_bytes: int) -> bool:
+        if collected_bytes > self.max_per_topic:
+            return False
+        if self._total_bytes + collected_bytes > self.max_bytes:
+            return False
+        return True
+
+    def commit(self, topic: str, messages: list[Any], bytes_used: int) -> None:
+        self._topics[topic] = messages
+        self._topic_bytes[topic] = bytes_used
+        self._total_bytes += bytes_used
+        logger.debug(
+            "Cached %d messages for %s (%.1f KB, total %.1f MB)",
+            len(messages),
+            topic,
+            bytes_used / 1024,
+            self._total_bytes / (1024 * 1024),
+        )
+
+    def get(self, topic: str) -> list[Any] | None:
+        return self._topics.get(topic)
+
+    def get_range(self, topic: str, start_ns: int | None, end_ns: int | None) -> list[Any] | None:
+        msgs = self._topics.get(topic)
+        if msgs is None:
+            return None
+        if start_ns is None and end_ns is None:
+            return msgs
+
+        # Binary search using timestamp (stored as seconds in BagMessage)
+        start_sec = start_ns / 1e9 if start_ns else None
+        end_sec = end_ns / 1e9 if end_ns else None
+
+        lo = 0
+        hi = len(msgs)
+        if start_sec is not None:
+            lo = bisect.bisect_left([m.timestamp for m in msgs], start_sec)
+        if end_sec is not None:
+            hi = bisect.bisect_right([m.timestamp for m in msgs], end_sec)
+        return msgs[lo:hi]
+
+    def clear(self) -> None:
+        self._topics.clear()
+        self._topic_bytes.clear()
+        self._total_bytes = 0
+
+    @property
+    def total_bytes(self) -> int:
+        return self._total_bytes
+
+    def stats(self) -> dict[str, Any]:
+        return {
+            "cached_topics": list(self._topics.keys()),
+            "total_bytes": self._total_bytes,
+            "per_topic": {
+                t: {"messages": len(m), "bytes": self._topic_bytes.get(t, 0)}
+                for t, m in self._topics.items()
+            },
+        }
+
+
+# ---------------------------------------------------------------------------
 # BagHandle — one open bag with its per-bag caches
 # ---------------------------------------------------------------------------
 
@@ -214,6 +197,8 @@ class BagHandle:
 
         # Per-topic timestamp indexes (built during full scans)
         self.topic_indexes: dict[str, TopicTimeIndex] = {}
+
+        self.message_cache = MessageCache()
 
         # Cached connections info
         self._connections: list[Any] | None = None
@@ -353,6 +338,7 @@ class BagCacheManager:
                     "path": h.path,
                     "indexed_topics": list(h.topic_indexes.keys()),
                     "cached_meta_keys": list(h.meta.keys()),
+                    "message_cache": h.message_cache.stats(),
                     "idle_s": round(time.monotonic() - h.last_used, 1),
                 }
                 for h in self._handles.values()
@@ -362,6 +348,7 @@ class BagCacheManager:
     def _close_handle(self, key: BagKey) -> None:
         handle = self._handles.pop(key, None)
         if handle is not None:
+            handle.message_cache.clear()
             logger.debug("Closed bag handle: %s", handle.path)
 
     def _evict_idle(self) -> None:

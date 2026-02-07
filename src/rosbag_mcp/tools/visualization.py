@@ -29,6 +29,7 @@ async def plot_timeseries(
     title: str = "Time Series Plot",
     bag_path: str | None = None,
 ) -> list[TextContent | ImageContent]:
+    """Plot time series data for one or more topic fields."""
     logger.info(f"Plotting time series for fields: {fields}")
     topics_to_fields: dict[str, list[tuple[str, str | None]]] = {}
     for field in fields:
@@ -93,6 +94,7 @@ async def plot_2d(
     title: str = "2D Trajectory",
     bag_path: str | None = None,
 ) -> list[TextContent | ImageContent]:
+    """Create a 2D XY trajectory plot from pose data."""
     logger.info(f"Plotting 2D trajectory from topic {pose_topic}")
     xs = []
     ys = []
@@ -142,6 +144,7 @@ async def plot_lidar_scan(
     title: str = "LiDAR Scan",
     bag_path: str | None = None,
 ) -> list[TextContent | ImageContent]:
+    """Visualize a LiDAR scan as a polar plot."""
     logger.info(f"Plotting LiDAR scan from topic {scan_topic} at timestamp {timestamp}")
     scan_msg = _get_message_at_time(scan_topic, timestamp, bag_path, tolerance=0.5)
 
@@ -191,6 +194,7 @@ async def plot_comparison(
     title: str = "Topic Comparison",
     bag_path: str | None = None,
 ) -> list[TextContent | ImageContent]:
+    """Overlay two topic fields with difference highlighting."""
     logger.info(f"Comparing topics {topic1} and {topic2}")
     data1 = {"times": [], "values": []}
     data2 = {"times": [], "values": []}

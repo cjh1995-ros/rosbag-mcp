@@ -172,43 +172,87 @@ def read_messages(
     path = _resolve_path(bag_path)
     handle = _cache.get_handle(path)
 
+    single_topic = topics is not None and len(topics) == 1
+    start_ns = int(start_time * 1e9) if start_time else None
+    end_ns = int(end_time * 1e9) if end_time else None
+
+    # --- Fast path: serve from message cache ---
+    if single_topic and handle.message_cache.has(topics[0]):
+        cached = handle.message_cache.get_range(topics[0], start_ns, end_ns)
+        if cached is not None:
+            logger.debug("Message cache hit: %s (%d messages)", topics[0], len(cached))
+            yield from cached
+            return
+
+    # --- Slow path: read from disk ---
+    no_time_filter = start_time is None and end_time is None
+    build_index = single_topic and no_time_filter
+    topic_for_index = topics[0] if build_index else None
+    timestamps_ns: list[int] | None = [] if build_index else None
+
+    should_collect = single_topic and no_time_filter and not handle.message_cache.has(topics[0])
+    collected: list[BagMessage] | None = [] if should_collect else None
+    collected_bytes = 0
+    completed = False
+
     with handle.reader_ctx() as reader:
         connections = reader.connections
         if topics:
             connections = [c for c in connections if c.topic in topics]
 
-        start_ns = int(start_time * 1e9) if start_time else None
-        end_ns = int(end_time * 1e9) if end_time else None
+        try:
+            for conn, timestamp, rawdata in reader.messages(connections=connections):
+                ts_sec = timestamp / 1e9
 
-        # Opportunistic index building: if scanning a single topic with no time filters,
-        # collect timestamps for future fast lookups
-        build_index = (
-            topics is not None and len(topics) == 1 and start_time is None and end_time is None
-        )
-        topic_for_index = topics[0] if build_index else None
-        timestamps_ns = [] if build_index else None
+                if start_ns and timestamp < start_ns:
+                    continue
+                if end_ns and timestamp > end_ns:
+                    break
 
-        for conn, timestamp, rawdata in reader.messages(connections=connections):
-            ts_sec = timestamp / 1e9
+                if build_index and timestamps_ns is not None:
+                    timestamps_ns.append(timestamp)
 
-            if start_ns and timestamp < start_ns:
-                continue
-            if end_ns and timestamp > end_ns:
-                break
+                # Size gate: check first message raw payload
+                if collected is not None and collected_bytes == 0:
+                    msg_count = conn.msgcount or 0
+                    if not handle.message_cache.can_cache(len(rawdata), msg_count):
+                        logger.debug(
+                            "Skipping message cache for %s (raw=%d bytes, count=%d)",
+                            conn.topic,
+                            len(rawdata),
+                            msg_count,
+                        )
+                        collected = None
 
-            if build_index and timestamps_ns is not None:
-                timestamps_ns.append(timestamp)
+                msg = reader.deserialize(rawdata, conn.msgtype)
+                bag_msg = BagMessage(
+                    topic=conn.topic,
+                    timestamp=ts_sec,
+                    data=_msg_to_dict(msg),
+                    msg_type=conn.msgtype,
+                )
 
-            msg = reader.deserialize(rawdata, conn.msgtype)
-            yield BagMessage(
-                topic=conn.topic, timestamp=ts_sec, data=_msg_to_dict(msg), msg_type=conn.msgtype
-            )
+                if collected is not None:
+                    collected.append(bag_msg)
+                    collected_bytes += len(rawdata) + 200
+                    if not handle.message_cache.budget_ok(collected_bytes):
+                        logger.debug(
+                            "Aborting message cache for %s (budget exceeded at %d bytes)",
+                            conn.topic,
+                            collected_bytes,
+                        )
+                        collected = None
+                        collected_bytes = 0
 
-        # Store index if we built one
-        if build_index and topic_for_index and timestamps_ns:
-            index = TopicTimeIndex(timestamps_ns=timestamps_ns)
-            handle.store_index(topic_for_index, index)
-            logger.debug(f"Built index for {topic_for_index}: {len(timestamps_ns)} timestamps")
+                yield bag_msg
+            completed = True
+        finally:
+            if build_index and topic_for_index and timestamps_ns:
+                index = TopicTimeIndex(timestamps_ns=timestamps_ns)
+                handle.store_index(topic_for_index, index)
+
+            if completed and collected is not None and collected:
+                handle.message_cache.commit(topics[0], collected, collected_bytes)
 
 
 def get_message_at_time(

@@ -27,6 +27,7 @@ async def get_message_at_time(
     bag_path: str | None = None,
     tolerance: float = 0.1,
 ) -> list[TextContent]:
+    """Get the nearest message from a topic at a specific timestamp."""
     logger.info(f"Getting message from topic {topic} at timestamp {timestamp}")
     msg = _get_message_at_time(
         topic=topic,
@@ -48,6 +49,7 @@ async def get_messages_in_range(
     bag_path: str | None = None,
     max_messages: int = 100,
 ) -> list[TextContent]:
+    """Get all messages from a topic within a time range."""
     logger.info(f"Getting messages from topic {topic} in range [{start_time}, {end_time}]")
     msgs = _get_messages_in_range(
         topic=topic,
@@ -70,6 +72,7 @@ async def search_messages(
     correlate_topic: str | None = None,
     correlation_tolerance: float = 0.1,
 ) -> list[TextContent]:
+    """Search messages using conditions like regex, threshold, or proximity."""
     logger.info(f"Searching messages in topic {topic} with condition {condition_type}")
     results = []
 

@@ -48,6 +48,7 @@ async def filter_bag(
     end_time: float | None = None,
     bag_path: str | None = None,
 ) -> list[TextContent]:
+    """Create a filtered copy of a bag file by topic and time range."""
     logger.info(f"Filtering bag to {output_path} with topics: {topics}")
     output_ext = Path(output_path).suffix
     source_path = bag_path or get_current_bag_path()
@@ -66,6 +67,7 @@ async def filter_bag(
     return [
         TextContent(
             type="text",
-            text=f"Created filtered bag at {output_path} with {message_count} messages from topics: {topics}",
+            text=f"Created filtered bag at {output_path} "
+            f"with {message_count} messages from topics: {topics}",
         )
     ]

@@ -15,6 +15,7 @@ from rosbag_mcp.tools import (
     analyze_lidar_scan,
     analyze_lidar_timeseries,
     analyze_logs,
+    analyze_mcl_divergence,
     analyze_navigation_health,
     analyze_path_tracking,
     analyze_pointcloud2,
@@ -178,6 +179,31 @@ TOOL_DEFINITIONS = [
                 "bag_path": {"type": "string", "description": "Optional: source bag file"},
             },
             "required": ["output_path", "topics"],
+        },
+    ),
+    Tool(
+        name="analyze_mcl_divergence",
+        description="Detect AMCL relocalization jumps and covariance divergence",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "amcl_topic": {
+                    "type": "string",
+                    "description": "AMCL pose topic (default: /amcl_pose)",
+                },
+                "jump_threshold": {
+                    "type": "number",
+                    "description": "Relocalization jump threshold in meters (default: 0.5)",
+                },
+                "covariance_warn": {
+                    "type": "number",
+                    "description": "High-uncertainty warning threshold in meters (default: 0.25)",
+                },
+                "start_time": {"type": "number", "description": "Optional: start time"},
+                "end_time": {"type": "number", "description": "Optional: end time"},
+                "bag_path": {"type": "string", "description": "Optional: specific bag file"},
+            },
+            "required": [],
         },
     ),
     Tool(
@@ -701,6 +727,14 @@ TOOL_HANDLERS = {
     "filter_bag": lambda args: filter_bag(
         output_path=args["output_path"],
         topics=args["topics"],
+        start_time=args.get("start_time"),
+        end_time=args.get("end_time"),
+        bag_path=args.get("bag_path"),
+    ),
+    "analyze_mcl_divergence": lambda args: analyze_mcl_divergence(
+        amcl_topic=args.get("amcl_topic", "/amcl_pose"),
+        jump_threshold=args.get("jump_threshold", 0.5),
+        covariance_warn=args.get("covariance_warn", 0.25),
         start_time=args.get("start_time"),
         end_time=args.get("end_time"),
         bag_path=args.get("bag_path"),

@@ -8,7 +8,7 @@ from statistics import mean, stdev
 
 import pytest
 
-from rosbag_mcp.cache import BagCacheManager, SizeAwareSLRU, TopicTimeIndex
+from rosbag_mcp.cache import BagCacheManager, TopicTimeIndex
 
 
 def benchmark(func, iterations=3, warmup=1):
@@ -30,42 +30,6 @@ def benchmark(func, iterations=3, warmup=1):
 
 class TestCacheBenchmarks:
     """Performance benchmarks for cache components."""
-
-    def test_benchmark_slru_vs_dict(self):
-        """Benchmark SizeAwareSLRU vs plain dict."""
-        n_ops = 1000
-
-        # Benchmark SLRU
-        def slru_ops():
-            cache = SizeAwareSLRU[str, str](max_bytes=1_000_000)
-            for i in range(n_ops):
-                cache.put(f"key{i}", f"value{i}", size_bytes=100)
-            for i in range(n_ops):
-                cache.get(f"key{i}")
-
-        # Benchmark dict
-        def dict_ops():
-            d: dict[str, str] = {}
-            for i in range(n_ops):
-                d[f"key{i}"] = f"value{i}"
-            for i in range(n_ops):
-                _ = d.get(f"key{i}")
-
-        slru_time, slru_std = benchmark(slru_ops)
-        dict_time, dict_std = benchmark(dict_ops)
-
-        overhead = slru_time / dict_time
-
-        print(f"\n{'=' * 60}")
-        print(f"Benchmark 1: SizeAwareSLRU vs dict ({n_ops} ops)")
-        print(f"{'=' * 60}")
-        print(f"SLRU:     {slru_time * 1000:.2f} ± {slru_std * 1000:.2f} ms")
-        print(f"dict:     {dict_time * 1000:.2f} ± {dict_std * 1000:.2f} ms")
-        print(f"Overhead: {overhead:.1f}x")
-        print(f"{'=' * 60}\n")
-
-        # Assert reasonable overhead (SLRU should be within 10x of dict)
-        assert overhead < 10.0, f"SLRU overhead too high: {overhead:.1f}x"
 
     def test_benchmark_topic_time_index_find_nearest(self):
         """Benchmark TopicTimeIndex.find_nearest with 100K timestamps."""
@@ -208,7 +172,8 @@ class TestCacheBenchmarks:
         print("Benchmark 5: Metadata cache hit vs miss")
         print(f"{'=' * 60}")
         print(
-            f"Cache miss:   {miss_time * 1000:.2f} ± {miss_std * 1000:.2f} ms (1000 BagInfo creations)"
+            f"Cache miss:   {miss_time * 1000:.2f} ± {miss_std * 1000:.2f} ms "
+            f"(1000 BagInfo creations)"
         )
         print(
             f"Cache hit:    {hit_time * 1000:.2f} ± {hit_std * 1000:.2f} ms (1000 cached returns)"
